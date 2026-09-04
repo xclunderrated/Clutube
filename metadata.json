@@ -1,0 +1,6 @@
+{
+  "name": "Clutube",
+  "description": "A feature-rich video streaming app for YouTube and media content.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
