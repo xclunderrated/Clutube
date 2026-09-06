@@ -141,6 +141,9 @@ fun VideoCard(
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.THUMBNAIL,
+            // Catalog movies/series show the official 2:3 poster WITH the
+            // title, centered uncropped over the 16:9 scene (no bars/crop).
+            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             dimAlpha = animatedDim,
             shape = ThumbnailShape
@@ -253,11 +256,11 @@ fun VideoCard(
             }
         }
 
-        // Details Row
+        // Details Row - compact, non-bold, cleaner text under thumbnail.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 10.dp),
+                .padding(horizontal = 4.dp, vertical = 8.dp),
             verticalAlignment = Alignment.Top
         ) {
             // Channel Avatar
@@ -265,11 +268,11 @@ fun VideoCard(
                 logoUrl = video.channelAvatarUrl,
                 contentDescription = video.channelName,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(32.dp)
                     .then(channelClickModifier)
             )
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
             // Title & Metadata
             Column(
@@ -293,13 +296,13 @@ fun VideoCard(
                     Text(
                         text = displayTitle,
                         modifier = Modifier.weight(1f),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        lineHeight = 20.sp,
-                        letterSpacing = (-0.1).sp
+                        lineHeight = 18.sp,
+                        letterSpacing = 0.sp
                     )
                     if (!formattedRating.isNullOrBlank()) {
                         Spacer(modifier = Modifier.width(6.dp))
@@ -310,7 +313,7 @@ fun VideoCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(3.dp))
+                Spacer(modifier = Modifier.height(2.dp))
 
                 // Single-line YouTube metadata: Studio • Year (exactly once —
                 // publishedAt duplicates the year, so it is skipped then).
@@ -337,10 +340,10 @@ fun VideoCard(
                 ) {
                     Text(
                         text = metaLine,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        lineHeight = 16.sp,
+                        lineHeight = 15.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
@@ -359,7 +362,7 @@ fun VideoCard(
                         Text(
                             text = typeLabel,
                             fontSize = 10.sp,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.Normal,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                             letterSpacing = 0.6.sp,
                             maxLines = 1
@@ -371,7 +374,7 @@ fun VideoCard(
                     Text(
                         text = continueLabel,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Normal,
                         color = YouTubeRed,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis

@@ -766,11 +766,13 @@ private fun ContinueWatchingCard(
         FittedMediaThumbnail(
             thumbnailUrl = video.thumbnailUrl,
             backdropUrl = video.backdropUrl,
+            posterUrl = video.posterUrl,
             contentDescription = video.title,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.COMPACT_THUMBNAIL,
+            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             shape = ContinueCardShape
         ) {
@@ -831,8 +833,8 @@ private fun ContinueWatchingCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = video.title,
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

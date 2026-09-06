@@ -234,12 +234,12 @@ fun MediaPosterCard(
             ) {
                 Text(
                     text = video.title,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Normal,
                     color = Color.White,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 17.sp
+                    lineHeight = 16.sp
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))

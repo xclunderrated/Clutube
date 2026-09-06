@@ -487,11 +487,18 @@ fun VideoWatchDetails(
                             )
                         }
                     }
-                    Text(
-                        text = if (video.mediaType == MediaType.TV_SHOW) "Official Series Network" else "Official Studio",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    // Real studio/network names only — never a generic
+                    // "Official" claim for catalog rows without one.
+                    val studioLine = remember(video.tmdbId, video.id, video.networks, video.productionCompanies) {
+                        (video.networks + video.productionCompanies).distinct().take(2).joinToString(" • ")
+                    }
+                    if (studioLine.isNotBlank()) {
+                        Text(
+                            text = studioLine,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 

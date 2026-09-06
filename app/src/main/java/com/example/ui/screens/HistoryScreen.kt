@@ -257,11 +257,13 @@ private fun HistoryEntryRow(
             FittedMediaThumbnail(
                 thumbnailUrl = video.thumbnailUrl,
                 backdropUrl = video.backdropUrl,
+                posterUrl = video.posterUrl,
                 contentDescription = video.title,
                 modifier = Modifier
                     .width(140.dp)
                     .aspectRatio(16f / 9f),
                 imagePreset = ImagePreset.COMPACT_THUMBNAIL,
+                preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
                 isWatched = false,
                 shape = RoundedCornerShape(8.dp)
             ) {
@@ -281,10 +283,10 @@ private fun HistoryEntryRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = video.title,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    lineHeight = 19.sp,
-                    letterSpacing = (-0.1).sp,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Normal,
+                    lineHeight = 17.sp,
+                    letterSpacing = 0.sp,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -295,9 +297,9 @@ private fun HistoryEntryRow(
                     } else {
                         video.channelName
                     },
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Normal,
-                    lineHeight = 16.sp,
+                    lineHeight = 15.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

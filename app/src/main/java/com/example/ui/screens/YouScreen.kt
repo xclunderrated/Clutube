@@ -1,8 +1,5 @@
 package com.example.ui.screens
 
-import android.content.Intent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -31,11 +28,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
@@ -45,29 +40,19 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistPlay
-import androidx.compose.material.icons.filled.QueueMusic
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.Tv
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -81,7 +66,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -90,11 +74,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.local.DownloadEntity
 import com.example.data.local.DownloadStatus
-import com.example.model.DeviceLayoutMode
 import com.example.model.MediaType
-import com.example.model.PlaybackPreferences
-import com.example.model.PlaybackQuality
-import com.example.model.SubtitlePreference
 import com.example.model.WatchHistoryEntry
 import com.example.model.VideoItem
 import com.example.model.WatchLaterSort
@@ -102,10 +82,10 @@ import com.example.model.formatPlaybackTime
 import com.example.model.playbackKey
 import com.example.model.titleGroupKey
 import com.example.model.toContinueUiModel
+import com.example.ui.components.EditProfileDialog
 import com.example.ui.components.FittedMediaThumbnail
 import com.example.ui.components.LocalProfileAvatar
 import com.example.ui.components.OfflineVideoPlayer
-import com.example.ui.components.isLocalProfileImageReference
 import com.example.ui.theme.YTBlueVerified
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
@@ -126,14 +106,8 @@ fun YouScreen(
     savedVideosCount: Int,
     queueCount: Int = 0,
     watchLaterSort: WatchLaterSort = WatchLaterSort.RECENTLY_ADDED,
-    showContinueWatchingOnHome: Boolean = false,
-    continueWatchFullscreen: Boolean = true,
-    onSetContinueWatchFullscreen: (Boolean) -> Unit = {},
-    releaseNotificationsEnabled: Boolean = true,
     localProfileName: String = "Clutube",
     localProfileAvatar: String = "C",
-    deviceLayoutMode: DeviceLayoutMode = DeviceLayoutMode.AUTO,
-    onSelectDeviceLayoutMode: (DeviceLayoutMode) -> Unit = {},
     onVideoClick: (VideoItem) -> Unit,
     onResumeHistory: (WatchHistoryEntry) -> Unit = { onVideoClick(it.video) },
     onViewAllHistory: () -> Unit = {},
@@ -141,39 +115,20 @@ fun YouScreen(
     onClearHistory: () -> Unit = {},
     onRemoveSaved: (String) -> Unit = {},
     onSetWatchLaterSort: (WatchLaterSort) -> Unit = {},
-    onSetContinueWatchingOnHome: (Boolean) -> Unit = {},
-    onSetReleaseNotificationsEnabled: (Boolean) -> Unit = {},
-    playbackPreferences: PlaybackPreferences = PlaybackPreferences(),
-    onQualitySelected: (PlaybackQuality) -> Unit = {},
-    onSubtitleSelected: (SubtitlePreference) -> Unit = {},
     onAddToQueue: (VideoItem) -> Unit = {},
     onOpenQueue: () -> Unit = {},
     onSaveProfile: (String, String) -> Unit = { _, _ -> },
-    onClearLocalData: () -> Unit = {},
-    notInterestedCount: Int = 0,
-    notRecommendedChannelCount: Int = 0,
-    onClearRecommendationPreferences: () -> Unit = {},
     onOpenServerDialog: () -> Unit,
+    onOpenSettings: () -> Unit = {},
     downloadsCount: Int = 0,
     downloads: List<DownloadEntity> = emptyList(),
     onOpenDownloads: () -> Unit = {},
     onDownloadSubtitles: (String) -> Unit = {},
     onSubtitleOffsetChanged: (String, Long) -> Unit = { _, _ -> },
     onSubtitleTrackChanged: (String, String?) -> Unit = { _, _ -> },
-    offlineSubtitleLanguage: String = "en",
-    isSubtitleAutoDownload: Boolean = true,
-    wyzieApiKey: String = "",
-    subdlApiKey: String = "",
-    onOfflineSubtitleLanguageSelected: (String) -> Unit = {},
-    onSubtitleAutoDownloadChanged: (Boolean) -> Unit = {},
-    onWyzieApiKeyChanged: (String) -> Unit = {},
-    onSubdlApiKeyChanged: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var isEditProfileOpen by remember { mutableStateOf(false) }
-    var isClearDataDialogOpen by remember { mutableStateOf(false) }
-    var isRecommendationDialogOpen by remember { mutableStateOf(false) }
-    var isPlaybackPreferencesOpen by remember { mutableStateOf(false) }
     var selectedSavedIds by remember { mutableStateOf(emptySet<String>()) }
     var playingOfflineDownload by remember { mutableStateOf<DownloadEntity?>(null) }
 
@@ -276,6 +231,16 @@ fun YouScreen(
                     Icon(
                         imageVector = Icons.Default.Dns,
                         contentDescription = "Stream servers",
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+                IconButton(
+                    onClick = onOpenSettings,
+                    modifier = Modifier.testTag("you_settings_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Settings",
                         tint = MaterialTheme.colorScheme.onBackground
                     )
                 }
@@ -699,8 +664,8 @@ fun YouScreen(
             Spacer(modifier = Modifier.height(12.dp))
         }
 
-        // Local library actions. Unsupported cloud-account actions are not
-        // shown as if they were available.
+        // Local library actions. Everything configurable moved to the
+        // dedicated Settings screen (gear button in the header above).
         item(key = "menu_items", contentType = "menu") {
             Column(modifier = Modifier.fillMaxWidth()) {
                 YouMenuItem(
@@ -732,84 +697,11 @@ fun YouScreen(
                     onClick = onOpenQueue
                 )
                 YouMenuItem(
-                    icon = Icons.Default.Dns,
-                    title = "Stream servers",
-                    subtitle = "Choose a playback provider",
-                    onClick = onOpenServerDialog
-                )
-                YouMenuItem(
                     icon = Icons.Default.Settings,
-                    title = "Playback preferences",
-                    subtitle = "${playbackQualityLabel(playbackPreferences.quality)} quality · ${subtitlePreferenceLabel(playbackPreferences.subtitles)} captions",
-                    onClick = { isPlaybackPreferencesOpen = true },
-                    testTag = "playback_preferences_settings"
-                )
-                YouMenuItem(
-                    icon = Icons.Default.History,
-                    title = "Continue watching on Home",
-                    subtitle = if (showContinueWatchingOnHome) {
-                        "Resume shelf is shown on the Home feed"
-                    } else {
-                        "Off · recent titles appear as normal cards"
-                    },
-                    onClick = { onSetContinueWatchingOnHome(!showContinueWatchingOnHome) },
-                    trailingContent = {
-                        Switch(
-                            checked = showContinueWatchingOnHome,
-                            onCheckedChange = onSetContinueWatchingOnHome,
-                            modifier = Modifier.testTag("continue_watching_home_toggle")
-                        )
-                    }
-                )
-                YouMenuItem(
-                    icon = Icons.Default.PlayArrow,
-                    title = "Start Continue Watching in fullscreen",
-                    subtitle = if (continueWatchFullscreen) {
-                        "Movies and series resume straight in fullscreen"
-                    } else {
-                        "Off · resumes open the watch page first"
-                    },
-                    onClick = { onSetContinueWatchFullscreen(!continueWatchFullscreen) },
-                    trailingContent = {
-                        Switch(
-                            checked = continueWatchFullscreen,
-                            onCheckedChange = onSetContinueWatchFullscreen,
-                            modifier = Modifier.testTag("continue_watch_fullscreen_toggle")
-                        )
-                    }
-                )
-                YouMenuItem(
-                    icon = Icons.Default.NotificationsActive,
-                    title = "Release notifications",
-                    subtitle = if (releaseNotificationsEnabled) {
-                        "Alerts are scheduled on this device"
-                    } else {
-                        "Off · alerts stay in the app inbox"
-                    },
-                    onClick = { onSetReleaseNotificationsEnabled(!releaseNotificationsEnabled) },
-                    trailingContent = {
-                        Switch(
-                            checked = releaseNotificationsEnabled,
-                            onCheckedChange = onSetReleaseNotificationsEnabled,
-                            modifier = Modifier.testTag("release_notifications_toggle")
-                        )
-                    }
-                )
-                YouMenuItem(
-                    icon = Icons.Default.VisibilityOff,
-                    title = "Recommendation controls",
-                    subtitle = if (notInterestedCount == 0 && notRecommendedChannelCount == 0) {
-                        "Personalize the Home feed"
-                    } else {
-                        "$notInterestedCount hidden videos, $notRecommendedChannelCount blocked channels"
-                    },
-                    onClick = { isRecommendationDialogOpen = true }
-                )
-                YouMenuItem(
-                    icon = Icons.Default.DeleteSweep,
-                    title = "Clear local data",
-                    subtitle = "Remove profile, history, saved videos, and queue",
-                    onClick = { isClearDataDialogOpen = true }
+                    title = "Settings",
+                    subtitle = "Playback, notifications, downloads, privacy",
+                    onClick = onOpenSettings,
+                    testTag = "you_settings_menu_item"
                 )
             }
         }
@@ -819,346 +711,12 @@ fun YouScreen(
         }
     }
 
-    if (isPlaybackPreferencesOpen) {
-        var qualityExpanded by remember { mutableStateOf(false) }
-        var subtitlesExpanded by remember { mutableStateOf(false) }
-        var offlineLangExpanded by remember { mutableStateOf(false) }
-        var wyzieDraft by remember(wyzieApiKey, isPlaybackPreferencesOpen) { mutableStateOf(wyzieApiKey) }
-        var subdlDraft by remember(subdlApiKey, isPlaybackPreferencesOpen) { mutableStateOf(subdlApiKey) }
-
-        AlertDialog(
-            onDismissRequest = {
-                if (wyzieDraft.trim() != wyzieApiKey) onWyzieApiKeyChanged(wyzieDraft)
-                if (subdlDraft.trim() != subdlApiKey) onSubdlApiKeyChanged(subdlDraft)
-                isPlaybackPreferencesOpen = false
-            },
-            title = { Text("Playback preferences") },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Saved to your account and used by every stream server.",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        TextButton(
-                            onClick = { qualityExpanded = true },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("quality_preference_picker")
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Playback quality")
-                                Text(
-                                    playbackQualityLabel(playbackPreferences.quality),
-                                    color = YouTubeRed,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = qualityExpanded,
-                            onDismissRequest = { qualityExpanded = false }
-                        ) {
-                            PlaybackQuality.values().forEach { quality ->
-                                DropdownMenuItem(
-                                    text = { Text(playbackQualityLabel(quality)) },
-                                    onClick = {
-                                        qualityExpanded = false
-                                        onQualitySelected(quality)
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        TextButton(
-                            onClick = { subtitlesExpanded = true },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("subtitle_preference_picker")
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Closed captions")
-                                Text(
-                                    subtitlePreferenceLabel(playbackPreferences.subtitles),
-                                    color = YouTubeRed,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = subtitlesExpanded,
-                            onDismissRequest = { subtitlesExpanded = false }
-                        ) {
-                            SubtitlePreference.values().forEach { subtitles ->
-                                DropdownMenuItem(
-                                    text = { Text(subtitlePreferenceLabel(subtitles)) },
-                                    onClick = {
-                                        subtitlesExpanded = false
-                                        onSubtitleSelected(subtitles)
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                    Text(
-                        text = "Offline subtitles",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-
-                    // Default language for downloaded sidecars.
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        TextButton(
-                            onClick = { offlineLangExpanded = true },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("offline_subtitle_lang_picker")
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Download language")
-                                Text(
-                                    text = when (offlineSubtitleLanguage) {
-                                        "es" -> "Spanish"
-                                        "off" -> "Off"
-                                        else -> "English"
-                                    },
-                                    color = YouTubeRed,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = offlineLangExpanded,
-                            onDismissRequest = { offlineLangExpanded = false }
-                        ) {
-                            listOf("en" to "English", "es" to "Spanish", "off" to "Off").forEach { (code, label) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    onClick = {
-                                        offlineLangExpanded = false
-                                        onOfflineSubtitleLanguageSelected(code)
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    // Auto-fetch sidecars when downloads finish.
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Auto-download subtitles",
-                            fontSize = 14.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Switch(
-                            checked = isSubtitleAutoDownload,
-                            onCheckedChange = onSubtitleAutoDownloadChanged,
-                            modifier = Modifier.testTag("offline_subtitle_auto_switch")
-                        )
-                    }
-
-                    // Optional BYOK keys. Blank = embedded key, then keyless
-                    // sources. Saved on dismiss.
-                    OutlinedTextField(
-                        value = wyzieDraft,
-                        onValueChange = { wyzieDraft = it },
-                        label = { Text("Wyzie API key (optional)", fontSize = 12.sp) },
-                        placeholder = { Text("store.wyzie.io/redeem", fontSize = 12.sp) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("wyzie_api_key_field"),
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = subdlDraft,
-                        onValueChange = { subdlDraft = it },
-                        label = { Text("SubDL API key (optional)", fontSize = 12.sp) },
-                        placeholder = { Text("subdl.com/panel/api", fontSize = 12.sp) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("subdl_api_key_field"),
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp)
-                    )
-                    Text(
-                        text = "Keys stay on this device and unlock higher subtitle quotas.",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (wyzieDraft.trim() != wyzieApiKey) onWyzieApiKeyChanged(wyzieDraft)
-                    if (subdlDraft.trim() != subdlApiKey) onSubdlApiKeyChanged(subdlDraft)
-                    isPlaybackPreferencesOpen = false
-                }) {
-                    Text("Done")
-                }
-            }
-        )
-    }
-
     if (isEditProfileOpen) {
-        var nameDraft by remember(localProfileName) { mutableStateOf(localProfileName) }
-        var avatarDraft by remember(localProfileAvatar) { mutableStateOf(localProfileAvatar) }
-        val context = LocalContext.current
-        val profileImagePicker = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.OpenDocument()
-        ) { uri ->
-            uri ?: return@rememberLauncherForActivityResult
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            }
-            avatarDraft = uri.toString()
-        }
-        AlertDialog(
-            onDismissRequest = { isEditProfileOpen = false },
-            title = { Text("Edit local profile") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = nameDraft,
-                        onValueChange = { nameDraft = it },
-                        label = { Text("Profile name") },
-                        singleLine = true
-                    )
-                    if (isLocalProfileImageReference(avatarDraft)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            LocalProfileAvatar(
-                                value = avatarDraft,
-                                imagePreset = ImagePreset.LARGE_AVATAR,
-                                modifier = Modifier.size(52.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(
-                                    text = "Profile photo selected",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = "Stored locally on this device",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    } else {
-                        OutlinedTextField(
-                            value = avatarDraft,
-                            onValueChange = { avatarDraft = it.take(2) },
-                            label = { Text("Avatar letters") },
-                            singleLine = true
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TextButton(onClick = { profileImagePicker.launch(arrayOf("image/*")) }) {
-                            Text("Choose photo")
-                        }
-                        if (isLocalProfileImageReference(avatarDraft)) {
-                            TextButton(onClick = {
-                                avatarDraft = nameDraft.trim().take(2).ifBlank { "C" }
-                            }) {
-                                Text("Use initials")
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    onSaveProfile(nameDraft, avatarDraft)
-                    isEditProfileOpen = false
-                }) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { isEditProfileOpen = false }) { Text("Cancel") }
-            }
-        )
-    }
-
-    if (isClearDataDialogOpen) {
-        AlertDialog(
-            onDismissRequest = { isClearDataDialogOpen = false },
-            title = { Text("Clear local data?") },
-            text = { Text("This removes your local profile, history, saved videos, likes, and queue from this device.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onClearLocalData()
-                    isClearDataDialogOpen = false
-                }) { Text("Clear data") }
-            },
-            dismissButton = {
-                TextButton(onClick = { isClearDataDialogOpen = false }) { Text("Cancel") }
-            }
-        )
-    }
-
-    if (isRecommendationDialogOpen) {
-        AlertDialog(
-            onDismissRequest = { isRecommendationDialogOpen = false },
-            title = { Text("Recommendation controls") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Your Home feed respects choices made from a video's menu.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp
-                    )
-                    Text(
-                        text = "$notInterestedCount videos hidden\n$notRecommendedChannelCount channels blocked",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    onClearRecommendationPreferences()
-                    isRecommendationDialogOpen = false
-                }) {
-                    Text("Clear choices")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { isRecommendationDialogOpen = false }) {
-                    Text("Done")
-                }
-            }
+        EditProfileDialog(
+            localProfileName = localProfileName,
+            localProfileAvatar = localProfileAvatar,
+            onSaveProfile = onSaveProfile,
+            onDismiss = { isEditProfileOpen = false }
         )
     }
 }
@@ -1286,11 +844,13 @@ private fun SavedVideoRow(
             FittedMediaThumbnail(
                 thumbnailUrl = video.thumbnailUrl,
                 backdropUrl = video.backdropUrl,
+                posterUrl = video.posterUrl,
                 contentDescription = video.title,
                 modifier = Modifier
                     .width(132.dp)
                     .aspectRatio(16f / 9f),
                 imagePreset = ImagePreset.COMPACT_THUMBNAIL,
+                preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
                 isWatched = false,
                 shape = RoundedCornerShape(6.dp)
             ) {
@@ -1316,10 +876,10 @@ private fun SavedVideoRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = video.title,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    lineHeight = 19.sp,
-                    letterSpacing = (-0.1).sp,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Normal,
+                    lineHeight = 17.sp,
+                    letterSpacing = 0.sp,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -1330,7 +890,7 @@ private fun SavedVideoRow(
                     } else {
                         video.channelName
                     },
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1351,21 +911,6 @@ private fun SavedVideoRow(
             }
         }
     }
-}
-
-private fun playbackQualityLabel(quality: PlaybackQuality): String = when (quality) {
-    PlaybackQuality.AUTO -> "Auto"
-    PlaybackQuality.P1080 -> "1080p"
-    PlaybackQuality.P720 -> "720p"
-    PlaybackQuality.P480 -> "480p"
-    PlaybackQuality.P360 -> "360p"
-}
-
-private fun subtitlePreferenceLabel(preference: SubtitlePreference): String = when (preference) {
-    SubtitlePreference.OFF -> "Off"
-    SubtitlePreference.AUTO -> "Auto"
-    SubtitlePreference.ENGLISH -> "English"
-    SubtitlePreference.SPANISH -> "Spanish"
 }
 
 private fun durationSortValue(duration: String): Int {
@@ -1423,11 +968,13 @@ private fun HistoryCard(
         FittedMediaThumbnail(
             thumbnailUrl = video.thumbnailUrl,
             backdropUrl = video.backdropUrl,
+            posterUrl = video.posterUrl,
             contentDescription = video.title,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.COMPACT_THUMBNAIL,
+            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             shape = HistoryCardShape
         ) {
@@ -1454,12 +1001,12 @@ private fun HistoryCard(
 
         Text(
             text = video.title,
-            fontSize = 12.5.sp,
-            fontWeight = FontWeight.Medium,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Normal,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            lineHeight = 17.sp
+            lineHeight = 16.sp
         )
 
         Text(
@@ -1468,7 +1015,7 @@ private fun HistoryCard(
             } else {
                 video.channelName
             },
-            fontSize = 11.5.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Normal,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,

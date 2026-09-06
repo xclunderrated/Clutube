@@ -303,13 +303,6 @@ fun ChannelScreen(
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                             }
-
-                            Text(
-                                text = "Official Studio Network & Stream Partner",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.SemiBold
-                            )
                         }
                     }
 

@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.model.MediaType
 import com.example.model.VideoItem
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
@@ -77,11 +78,13 @@ fun MiniPlayer(
                 FittedMediaThumbnail(
                     thumbnailUrl = video.thumbnailUrl,
                     backdropUrl = video.backdropUrl,
+                    posterUrl = video.posterUrl,
                     contentDescription = video.title,
                     modifier = Modifier
                         .height(46.dp)
                         .aspectRatio(16f / 9f),
                     imagePreset = ImagePreset.COMPACT_THUMBNAIL,
+                    preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
                     isWatched = false,
                     shape = RoundedCornerShape(6.dp)
                 )
@@ -95,7 +98,7 @@ fun MiniPlayer(
                     Text(
                         text = video.title,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis

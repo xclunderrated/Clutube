@@ -84,6 +84,7 @@ import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.NotificationsScreen
 import com.example.ui.screens.SearchScreen
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.ShortsScreen
 import com.example.ui.screens.SubscriptionsScreen
 import com.example.ui.screens.WatchScreen
@@ -269,6 +270,8 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         viewModel.refreshNotifications()
+        // Re-issue an empty "More shows" shelf lost while backgrounded.
+        viewModel.refreshRelatedIfEmpty()
     }
 
     override fun onPause() {
@@ -529,6 +532,7 @@ fun YouTubeApp(
         when {
             isFullscreen -> activity?.let { com.example.util.FullscreenHelper.exitFullscreen(it) }
             uiState.showHistoryScreen -> viewModel.setShowHistoryScreen(false)
+            uiState.showSettingsScreen -> viewModel.setShowSettingsScreen(false)
             uiState.showCommentsSheet -> viewModel.setShowCommentsSheet(false)
             uiState.isChannelScreenOpen -> viewModel.closeChannel()
             uiState.isPlayerExpanded -> viewModel.minimizePlayer()
@@ -773,12 +777,8 @@ fun YouTubeApp(
                                 savedVideosCount = uiState.savedVideoIds.size,
                                 queueCount = uiState.queue.size,
                                 watchLaterSort = uiState.watchLaterSort,
-                                showContinueWatchingOnHome = uiState.showContinueWatchingOnHome,
-                                releaseNotificationsEnabled = uiState.releaseNotificationsEnabled,
                                 localProfileName = uiState.localProfileName,
                                 localProfileAvatar = uiState.localProfileAvatar,
-                                deviceLayoutMode = uiState.deviceLayoutMode,
-                                onSelectDeviceLayoutMode = { viewModel.setDeviceLayoutMode(it) },
                                 onVideoClick = { viewModel.playVideo(it, expand = true) },
                                 onResumeHistory = { viewModel.resumeWatch(it, expand = true) },
                                 onViewAllHistory = { viewModel.setShowHistoryScreen(true) },
@@ -786,35 +786,17 @@ fun YouTubeApp(
                                 onClearHistory = { viewModel.clearWatchHistory() },
                                 onRemoveSaved = { viewModel.toggleSave(it) },
                                 onSetWatchLaterSort = { viewModel.setWatchLaterSort(it) },
-                                onSetContinueWatchingOnHome = { viewModel.setShowContinueWatchingOnHome(it) },
-                                continueWatchFullscreen = uiState.continueWatchFullscreen,
-                                onSetContinueWatchFullscreen = { viewModel.setContinueWatchFullscreen(it) },
-                                onSetReleaseNotificationsEnabled = { viewModel.setReleaseNotificationsEnabled(it) },
-                                playbackPreferences = uiState.playbackPreferences,
-                                onQualitySelected = { viewModel.setPlaybackQuality(it) },
-                                onSubtitleSelected = { viewModel.setSubtitlePreference(it) },
                                 onAddToQueue = { viewModel.addToQueue(it) },
                                 onOpenQueue = { viewModel.setQueuePanelOpen(true) },
                                 onSaveProfile = { name, avatar -> viewModel.saveLocalProfile(name, avatar) },
-                                onClearLocalData = { viewModel.clearLocalData() },
-                                notInterestedCount = uiState.notInterestedVideoIds.size,
-                                notRecommendedChannelCount = uiState.notRecommendedChannelNames.size,
-                                onClearRecommendationPreferences = { viewModel.clearRecommendationPreferences() },
                                 onOpenServerDialog = { viewModel.setShowServerDialog(true) },
+                                onOpenSettings = { viewModel.setShowSettingsScreen(true) },
                                 downloadsCount = uiState.downloads.count { it.status == com.example.data.local.DownloadStatus.COMPLETED.name },
                                 downloads = uiState.downloads,
                                 onOpenDownloads = { viewModel.openDownloadsScreen() },
                                 onDownloadSubtitles = { viewModel.fetchSubtitlesForDownload(it) },
                                 onSubtitleOffsetChanged = { id, offsetMs -> viewModel.updateSubtitleOffset(id, offsetMs) },
-                                onSubtitleTrackChanged = { id, trackId -> viewModel.setSubtitleTrack(id, trackId) },
-                                offlineSubtitleLanguage = uiState.offlineSubtitleLanguage,
-                                isSubtitleAutoDownload = uiState.isSubtitleAutoDownload,
-                                wyzieApiKey = uiState.wyzieApiKey,
-                                subdlApiKey = uiState.subdlApiKey,
-                                onOfflineSubtitleLanguageSelected = { viewModel.setOfflineSubtitleLanguage(it) },
-                                onSubtitleAutoDownloadChanged = { viewModel.setSubtitleAutoDownload(it) },
-                                onWyzieApiKeyChanged = { viewModel.setWyzieApiKey(it) },
-                                onSubdlApiKeyChanged = { viewModel.setSubdlApiKey(it) }
+                                onSubtitleTrackChanged = { id, trackId -> viewModel.setSubtitleTrack(id, trackId) }
                             )
                         }
                     }
@@ -873,6 +855,39 @@ fun YouTubeApp(
             )
         }
 
+        if (uiState.showSettingsScreen) {
+            SettingsScreen(
+                playbackPreferences = uiState.playbackPreferences,
+                onQualitySelected = { viewModel.setPlaybackQuality(it) },
+                onSubtitleSelected = { viewModel.setSubtitlePreference(it) },
+                isAutoNextEpisodeEnabled = uiState.isAutoNextEpisodeEnabled,
+                onToggleAutoNextEpisode = { viewModel.toggleAutoNextEpisode() },
+                showContinueWatchingOnHome = uiState.showContinueWatchingOnHome,
+                onSetContinueWatchingOnHome = { viewModel.setShowContinueWatchingOnHome(it) },
+                continueWatchFullscreen = uiState.continueWatchFullscreen,
+                onSetContinueWatchFullscreen = { viewModel.setContinueWatchFullscreen(it) },
+                deviceLayoutMode = uiState.deviceLayoutMode,
+                onSelectDeviceLayoutMode = { viewModel.setDeviceLayoutMode(it) },
+                releaseNotificationsEnabled = uiState.releaseNotificationsEnabled,
+                onSetReleaseNotificationsEnabled = { viewModel.setReleaseNotificationsEnabled(it) },
+                offlineSubtitleLanguage = uiState.offlineSubtitleLanguage,
+                isSubtitleAutoDownload = uiState.isSubtitleAutoDownload,
+                wyzieApiKey = uiState.wyzieApiKey,
+                subdlApiKey = uiState.subdlApiKey,
+                onOfflineSubtitleLanguageSelected = { viewModel.setOfflineSubtitleLanguage(it) },
+                onSubtitleAutoDownloadChanged = { viewModel.setSubtitleAutoDownload(it) },
+                onWyzieApiKeyChanged = { viewModel.setWyzieApiKey(it) },
+                onSubdlApiKeyChanged = { viewModel.setSubdlApiKey(it) },
+                onOpenDownloads = { viewModel.openDownloadsScreen() },
+                onOpenServerDialog = { viewModel.setShowServerDialog(true) },
+                notInterestedCount = uiState.notInterestedVideoIds.size,
+                notRecommendedChannelCount = uiState.notRecommendedChannelNames.size,
+                onClearRecommendationPreferences = { viewModel.clearRecommendationPreferences() },
+                onClearLocalData = { viewModel.clearLocalData() },
+                onBack = { viewModel.setShowSettingsScreen(false) }
+            )
+        }
+
         if (uiState.showDownloadsScreen) {
             DownloadsScreen(
                 downloads = uiState.downloads,
@@ -926,6 +941,9 @@ fun YouTubeApp(
                         ?: uiState.currentHistoryEntry?.positionSeconds?.toDouble() ?: 0.0,
                      currentPlaybackSnapshot = uiState.currentPlaybackSnapshot,
                      isPlaying = uiState.isPlaying,
+                     isRelatedLoading = uiState.isRelatedLoading,
+                     relatedErrorMessage = uiState.relatedErrorMessage,
+                     onRetryRelated = { viewModel.retryRelatedVideos() },
                     isLiked = isLiked,
                     isDisliked = isDisliked,
                     isSubscribed = isSubscribed,

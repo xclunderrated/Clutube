@@ -1285,6 +1285,7 @@ private fun QueuedDownloadCard(
                         .width(72.dp)
                         .aspectRatio(16f / 9f),
                     imagePreset = ImagePreset.COMPACT_THUMBNAIL,
+                    preferPoster = true,
                     shape = RoundedCornerShape(8.dp)
                 )
 
@@ -1293,8 +1294,8 @@ private fun QueuedDownloadCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = download.title,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -1602,6 +1603,7 @@ private fun DownloadedEpisodeRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Thumbnail
+        // Episode rows keep the episode still (not the series poster).
         FittedMediaThumbnail(
             thumbnailUrl = episode.thumbnailUrl,
             backdropUrl = episode.backdropUrl,
@@ -1611,6 +1613,7 @@ private fun DownloadedEpisodeRow(
                 .width(68.dp)
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.EPISODE_THUMBNAIL,
+            preferPoster = false,
             shape = RoundedCornerShape(6.dp)
         )
 
@@ -1633,7 +1636,7 @@ private fun DownloadedEpisodeRow(
             Text(
                 text = "S${episode.seasonNumber ?: 1}:E${episode.episodeNumber ?: 1} $cleanEpisodeName",
                 fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

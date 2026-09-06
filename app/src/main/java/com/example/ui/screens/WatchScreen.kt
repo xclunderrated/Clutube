@@ -33,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -85,6 +86,11 @@ fun WatchScreen(
     resumePositionSeconds: Double = 0.0,
     currentPlaybackSnapshot: PlayerSnapshot? = null,
     isPlaying: Boolean = true,
+    /** True while "More shows" is fetching (skeletons only then). */
+    isRelatedLoading: Boolean = false,
+    /** Shown with a Retry button when related fetch failed with nothing cached. */
+    relatedErrorMessage: String? = null,
+    onRetryRelated: () -> Unit = {},
     isLiked: Boolean,
     isDisliked: Boolean,
     isSubscribed: Boolean,
@@ -350,15 +356,7 @@ fun WatchScreen(
                             }
                         }
 
-                        if (displayRelatedVideos.isEmpty()) {
-                            items(
-                                count = 4,
-                                key = { "tab_rel_skel_$it" },
-                                contentType = { "related_skeleton" }
-                            ) {
-                                VideoCardSkeleton()
-                            }
-                        } else {
+                        if (displayRelatedVideos.isNotEmpty()) {
                             items(
                                 items = displayRelatedVideos,
                                 key = { it.id },
@@ -388,6 +386,25 @@ fun WatchScreen(
                                     onNotInterested = { onNotInterested(relatedVideo) },
                                     onNotRecommendChannel = { onNotRecommendChannel(relatedVideo) },
                                     modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                            }
+                        } else if (isRelatedLoading) {
+                            items(
+                                count = 4,
+                                key = { "tab_rel_skel_$it" },
+                                contentType = { "related_skeleton" }
+                            ) {
+                                VideoCardSkeleton()
+                            }
+                        } else {
+                            item(
+                                key = "tab_rel_error",
+                                contentType = "related_error",
+                                span = { GridItemSpan(2) }
+                            ) {
+                                RelatedErrorRow(
+                                    message = relatedErrorMessage,
+                                    onRetry = onRetryRelated
                                 )
                             }
                         }
@@ -519,25 +536,7 @@ fun WatchScreen(
                         }
                     }
 
-                    if (displayRelatedVideos.isEmpty()) {
-                        items(
-                            count = if (isTabletDevice) 2 else 4,
-                            key = { "port_rel_skel_$it" },
-                            contentType = { "video_card_skeleton" }
-                        ) {
-                            if (isTabletDevice) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    VideoCardSkeleton(modifier = Modifier.weight(1f))
-                                    VideoCardSkeleton(modifier = Modifier.weight(1f))
-                                }
-                            } else {
-                                VideoCardSkeleton()
-                            }
-                        }
-                    } else {
+                    if (displayRelatedVideos.isNotEmpty()) {
                         items(
                             items = displayRelatedVideos.chunked(if (isTabletDevice) 2 else 1),
                             key = { row -> row.joinToString("|") { it.id } },
@@ -578,6 +577,31 @@ fun WatchScreen(
                                     Spacer(modifier = Modifier.weight(1f))
                                 }
                             }
+                        }
+                    } else if (isRelatedLoading) {
+                        items(
+                            count = if (isTabletDevice) 2 else 4,
+                            key = { "port_rel_skel_$it" },
+                            contentType = { "video_card_skeleton" }
+                        ) {
+                            if (isTabletDevice) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    VideoCardSkeleton(modifier = Modifier.weight(1f))
+                                    VideoCardSkeleton(modifier = Modifier.weight(1f))
+                                }
+                            } else {
+                                VideoCardSkeleton()
+                            }
+                        }
+                    } else {
+                        item(key = "port_rel_error", contentType = "related_error") {
+                            RelatedErrorRow(
+                                message = relatedErrorMessage,
+                                onRetry = onRetryRelated
+                            )
                         }
                     }
                         }
@@ -622,6 +646,38 @@ private fun ComingSoonPlayerPlaceholder() {
 
 private const val UP_NEXT_LEAD_SECONDS = 60.0
 private const val UP_NEXT_COUNTDOWN_SECONDS = 10.0
+
+/**
+ * Replaces infinite skeletons when "More shows" has nothing to show and is
+ * not loading (e.g. fetch failed while backgrounded). Retry re-issues the
+ * fetch; foregrounding the app does the same automatically.
+ */
+@Composable
+private fun RelatedErrorRow(
+    message: String?,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = message ?: "Couldn't load More shows.",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        TextButton(
+            onClick = onRetry,
+            modifier = Modifier.testTag("related_retry_button")
+        ) {
+            Text(text = "Retry", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        }
+    }
+}
 
 @Composable
 private fun PlayerSurfaceWithUpNext(

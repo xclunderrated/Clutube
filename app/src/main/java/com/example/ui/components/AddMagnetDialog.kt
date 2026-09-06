@@ -4,9 +4,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,11 +18,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,27 +53,6 @@ fun AddMagnetDialog(
     val context = LocalContext.current
     var magnetInput by remember { mutableStateOf("") }
     var titleInput by remember { mutableStateOf("") }
-
-    val presetTorrents = listOf(
-        PresetTorrent(
-            name = "Big Buck Bunny (1080p)",
-            desc = "Blender Foundation Open Film • 885 MB",
-            magnet = "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny&tr=udp%3A%2F%2Fexplodie.org%3A6969&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337",
-            directUrl = null
-        ),
-        PresetTorrent(
-            name = "Sintel (1080p)",
-            desc = "Durian Open Movie Project • 650 MB",
-            magnet = "magnet:?xt=urn:btih:08a806048650c60c83074029e7b39559f8075bca&dn=Sintel&tr=udp%3A%2F%2Fexplodie.org%3A6969&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337",
-            directUrl = null
-        ),
-        PresetTorrent(
-            name = "Tears of Steel (Sci-Fi)",
-            desc = "Mango Open Movie Project • 570 MB",
-            magnet = "magnet:?xt=urn:btih:209c8226b299b308e24c4b0dc3b4be882ee0375e&dn=Tears+of+Steel&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80",
-            directUrl = null
-        )
-    )
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -188,70 +162,7 @@ fun AddMagnetDialog(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Start Download", fontWeight = FontWeight.Bold)
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Verified Preset Torrents Section
-                Text(
-                    text = "VERIFIED TEST TORRENTS (LIVE SEEDS)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                presetTorrents.forEach { preset ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clickable {
-                                onAddMagnet(preset.magnet, preset.name, preset.directUrl)
-                            },
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                        ),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = preset.name,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = preset.desc,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = "Add",
-                                tint = YouTubeRed,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
             }
         }
     }
 }
-
-private data class PresetTorrent(
-    val name: String,
-    val desc: String,
-    val magnet: String,
-    val directUrl: String? = null
-)

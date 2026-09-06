@@ -53,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.MediaType
 import com.example.model.VideoItem
 import com.example.model.playbackKey
 import com.example.ui.theme.YouTubeRed
@@ -255,11 +256,13 @@ private fun QueueVideoRow(
         FittedMediaThumbnail(
             thumbnailUrl = video.thumbnailUrl,
             backdropUrl = video.backdropUrl,
+            posterUrl = video.posterUrl,
             contentDescription = video.title,
             modifier = Modifier
                 .width(96.dp)
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.COMPACT_THUMBNAIL,
+            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             shape = RoundedCornerShape(5.dp)
         ) {
@@ -277,7 +280,7 @@ private fun QueueVideoRow(
             Text(
                 text = video.title,
                 fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Normal,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onBackground

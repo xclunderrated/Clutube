@@ -283,14 +283,15 @@ object TorrentIndexerService {
                 val streamName = s.optString("name", "Torrentio")
                 val cleanTitle = rawTitle.lines().firstOrNull()?.trim() ?: "$title 1080p"
 
-                // Extract seeders from text (e.g. 👤 142)
+                // Extract seeders from text (e.g. 👤 142). Unknown stays
+                // unknown (-1): never invent 45 seeds.
                 val seedsMatch = Regex("👤\\s*(\\d+)").find(rawTitle)
-                val seeders = seedsMatch?.groupValues?.get(1)?.toIntOrNull() ?: 45
+                val seeders = seedsMatch?.groupValues?.get(1)?.toIntOrNull() ?: -1
 
-                // Extract size
+                // Extract size. Unknown stays "—" with 0 bytes.
                 val sizeMatch = Regex("💾\\s*([0-9.]+\\s*(?:GB|MB|KB))", RegexOption.IGNORE_CASE).find(rawTitle)
-                val sizeStr = sizeMatch?.groupValues?.get(1) ?: "2.1 GB"
-                val sizeBytes = parseSizeToBytes(sizeStr)
+                val sizeStr = sizeMatch?.groupValues?.get(1) ?: "—"
+                val sizeBytes = sizeMatch?.let { parseSizeToBytes(it.groupValues[1]) } ?: 0L
 
                 // Extract provider from text (e.g. ⚙️ 1337x or TorrentGalaxy)
                 val providerMatch = Regex("⚙️\\s*([a-zA-Z0-9_-]+)").find(rawTitle)
@@ -312,7 +313,7 @@ object TorrentIndexerService {
                         sizeBytes = sizeBytes,
                         sizeDisplay = sizeStr,
                         seeders = seeders,
-                        leechers = (seeders * 0.2).toInt().coerceAtLeast(1),
+                        leechers = if (seeders >= 0) (seeders * 0.2).toInt().coerceAtLeast(1) else 0,
                         provider = provider,
                         indexerId = TorrentSourceRegistry.TORRENTIO,
                         isVerified = true
@@ -355,11 +356,11 @@ object TorrentIndexerService {
                 val cleanTitle = rawTitle.lines().firstOrNull()?.trim() ?: "$showTitle S%02dE%02d".format(season, episode)
 
                 val seedsMatch = Regex("👤\\s*(\\d+)").find(rawTitle)
-                val seeders = seedsMatch?.groupValues?.get(1)?.toIntOrNull() ?: 55
+                val seeders = seedsMatch?.groupValues?.get(1)?.toIntOrNull() ?: -1
 
                 val sizeMatch = Regex("💾\\s*([0-9.]+\\s*(?:GB|MB|KB))", RegexOption.IGNORE_CASE).find(rawTitle)
-                val sizeStr = sizeMatch?.groupValues?.get(1) ?: "1.2 GB"
-                val sizeBytes = parseSizeToBytes(sizeStr)
+                val sizeStr = sizeMatch?.groupValues?.get(1) ?: "—"
+                val sizeBytes = sizeMatch?.let { parseSizeToBytes(it.groupValues[1]) } ?: 0L
 
                 val providerMatch = Regex("⚙️\\s*([a-zA-Z0-9_-]+)").find(rawTitle)
                 val provider = providerMatch?.groupValues?.get(1) ?: "Torrentio"
@@ -380,7 +381,7 @@ object TorrentIndexerService {
                         sizeBytes = sizeBytes,
                         sizeDisplay = sizeStr,
                         seeders = seeders,
-                        leechers = (seeders * 0.15).toInt().coerceAtLeast(1),
+                        leechers = if (seeders >= 0) (seeders * 0.15).toInt().coerceAtLeast(1) else 0,
                         provider = provider,
                         season = season,
                         episode = episode,
@@ -993,7 +994,8 @@ object TorrentIndexerService {
             lower.contains("360p") || lower.contains("360i") -> "360p"
             hdWord.containsMatchIn(lower) -> "720p"
             lower.contains(" dvd") || lower.contains("dvdrip") || lower.contains(" sd") || lower == "sd" -> "480p"
-            else -> "1080p"
+            // Unknown quality stays unknown — never claim 1080p.
+            else -> "Unknown"
         }
     }
 

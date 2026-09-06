@@ -154,9 +154,9 @@ object TmdbRepository {
         StudioInfo(
             name = "Warner Bros. Pictures",
             avatar = "https://yt3.googleusercontent.com/yVXKYrUI8hckCQdyUuOWf5ZJk2keT8WO3TV2b8RYk3RKgjz5Rh8v1UsH7Yz2j_hbDQRk32rZ_rM=s900-c-k-c0x00ffffff-no-rj",
-            subs = "11.4M subscribers",
-            banner = "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80",
-            description = "Official YouTube channel for Warner Bros. Pictures. Discover cinematic blockbusters, premier trailers, and exclusive behind-the-scenes content.",
+            subs = "",
+            banner = "",
+            description = "",
             searchQuery = "Warner Bros",
             tmdbCompanyId = 174,
             youtubeChannelUrl = "https://www.youtube.com/@WarnerBrosPictures"
@@ -164,9 +164,9 @@ object TmdbRepository {
         StudioInfo(
             name = "Netflix",
             avatar = "https://yt3.googleusercontent.com/3b73AYEMMfa3SX5KJMeygio9smTPvrPrpicuQZbfQ_2DN7dV_ApiRM4CdYjSprEy1YYvt_9b=s900-c-k-c0x00ffffff-no-rj",
-            subs = "28.5M subscribers",
-            banner = "https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?w=1200&auto=format&fit=crop&q=80",
-            description = "Welcome to the official Netflix channel. Watch full original series, movies, award-winning documentaries, and specials in 4K HDR.",
+            subs = "",
+            banner = "",
+            description = "",
             searchQuery = "Netflix",
             tmdbNetworkId = 213,
             youtubeChannelUrl = "https://www.youtube.com/@Netflix"
@@ -174,9 +174,9 @@ object TmdbRepository {
         StudioInfo(
             name = "HBO",
             avatar = "https://yt3.googleusercontent.com/xrXPx6zj9lXDumnGmxo1BMS3NhyOjHaO3io8FXK1yqbojj3eMJpbJ-b92ODieH2hsY8KYuXs_w=s900-c-k-c0x00ffffff-no-rj",
-            subs = "8.9M subscribers",
-            banner = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=1200&auto=format&fit=crop&q=80",
-            description = "The home of HBO Originals, iconic dramas, groundbreaking series, and landmark cinema productions.",
+            subs = "",
+            banner = "",
+            description = "",
             searchQuery = "HBO",
             tmdbCompanyId = 3268,
             tmdbNetworkId = 49,
@@ -185,9 +185,9 @@ object TmdbRepository {
         StudioInfo(
             name = "Marvel Studios",
             avatar = "https://yt3.googleusercontent.com/k7BhK-hm9_MbJbaKznHPhir6e4pWXbm1ppAHoseLIzRgoAPBMmH1IIhYKlXbGono25RD1OQwHQ=s900-c-k-c0x00ffffff-no-rj",
-            subs = "20.1M subscribers",
-            banner = "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=1200&auto=format&fit=crop&q=80",
-            description = "The official channel for Marvel Studios. Experience the Marvel Cinematic Universe with movies, series, and superhero legends.",
+            subs = "",
+            banner = "",
+            description = "",
             searchQuery = "Marvel",
             tmdbCompanyId = 420,
             youtubeChannelUrl = "https://www.youtube.com/@Marvel"
@@ -195,9 +195,9 @@ object TmdbRepository {
         StudioInfo(
             name = "A24",
             avatar = "https://yt3.googleusercontent.com/37jAKnh2Yt05eT_ebynqYHNAQXUedv98drEAnFstVbHoi2c9wL2dFdeDgQDnX7R6bdBXsEXaRw=s900-c-k-c0x00ffffff-no-rj",
-            subs = "3.6M subscribers",
-            banner = "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=1200&auto=format&fit=crop&q=80",
-            description = "Independent film and television production studio known for visionary storytelling, indie masterpieces, and arthouse cinema.",
+            subs = "",
+            banner = "",
+            description = "",
             searchQuery = "A24",
             tmdbCompanyId = 41077,
             youtubeChannelUrl = "https://www.youtube.com/@A24"
@@ -205,9 +205,9 @@ object TmdbRepository {
         StudioInfo(
             name = "Universal Pictures",
             avatar = "https://yt3.googleusercontent.com/PzIajPyy9_HJ-LR5S6q86JV9o2GjabXF54QJnr3PeHpOiGOXtroatGM3mB2QxQa_vkF5yuyu9hs=s900-c-k-c0x00ffffff-no-rj",
-            subs = "9.2M subscribers",
-            banner = "https://images.unsplash.com/photo-1518676590629-3dcbd9c5a5c9?w=1200&auto=format&fit=crop&q=80",
-            description = "Official home of Universal Pictures. Watch action-packed thrillers, classic franchises, and world-class theatrical films.",
+            subs = "",
+            banner = "",
+            description = "",
             searchQuery = "Universal",
             tmdbCompanyId = 33,
             youtubeChannelUrl = "https://www.youtube.com/@UniversalPictures"
@@ -215,9 +215,9 @@ object TmdbRepository {
         StudioInfo(
             name = "Paramount+",
             avatar = "https://yt3.googleusercontent.com/sb8Ha1xXC5Z2MmsAnucyBCKpJ6gjiHgqyKlk1X8Up7_aKD8LIBM3gNQ2D4bVrt3MG8wMe0y_sA=s900-c-k-c0x00ffffff-no-rj",
-            subs = "5.4M subscribers",
-            banner = "https://images.unsplash.com/photo-1485846234645-a62644f84728?w=1200&auto=format&fit=crop&q=80",
-            description = "Stream iconic series, blockbuster movies, live sports, and original series on the official Paramount+ channel.",
+            subs = "",
+            banner = "",
+            description = "",
             searchQuery = "Paramount",
             tmdbCompanyId = 4,
             tmdbNetworkId = 4330,
@@ -226,9 +226,9 @@ object TmdbRepository {
         StudioInfo(
             name = "Apple TV",
             avatar = "https://yt3.googleusercontent.com/j80BliGp7lHWs89o2pAkm0Kv0R98sVASljijox5AsjYRZgovOFeyUekozb4_T8da1th7EI4Pyg=s900-c-k-c0x00ffffff-no-rj",
-            subs = "7.1M subscribers",
-            banner = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=1200&auto=format&fit=crop&q=80",
-            description = "Apple Original films and series from today's top storytellers. Watch premium dramas, comedies, and documentaries.",
+            subs = "",
+            banner = "",
+            description = "",
             searchQuery = "Apple TV",
             tmdbNetworkId = 2552,
             youtubeChannelUrl = "https://www.youtube.com/@AppleTV"
@@ -236,9 +236,9 @@ object TmdbRepository {
         StudioInfo(
             name = "Disney+",
             avatar = "https://yt3.googleusercontent.com/UPhpnK8upp-dSOTsTLHh-oi4vybASrC5eppw1ud4NgMAvGEjFXaN46bcj-mu2IahKeW5nb2Ywg=s900-c-k-c0x00ffffff-no-rj",
-            subs = "14.8M subscribers",
-            banner = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=1200&auto=format&fit=crop&q=80",
-            description = "The dedicated streaming home for movies and shows from Disney, Pixar, Marvel, Star Wars, National Geographic, and more.",
+            subs = "",
+            banner = "",
+            description = "",
             searchQuery = "Disney",
             tmdbNetworkId = 2739,
             youtubeChannelUrl = "https://www.youtube.com/@Disney"
@@ -618,34 +618,32 @@ object TmdbRepository {
         val formattedTitle = titleText
 
         // Preferred: Official poster artwork for the exact movie or TV show.
-        // Fallback 1: Current thumbnail implementation (backdrop scene from the same title).
-        // Fallback 2: Existing empty-state placeholder only if neither exists.
+        // Fallback: backdrop scene from the same title. No generic stock
+        // photo — a title without TMDB art renders the empty-state icon.
         val officialPoster = item.posterPath?.takeIf { it.isNotBlank() }?.let {
             "${TmdbClient.IMAGE_BASE_W500}$it"
         }
         val sameTitleBackdrop = item.backdropPath?.takeIf { it.isNotBlank() }?.let {
             "${TmdbClient.IMAGE_BASE_W780}$it"
         }
-        val emptyStateFallback = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=800&auto=format&fit=crop&q=80"
 
-        val selectedThumbnail = sameTitleBackdrop ?: officialPoster ?: emptyStateFallback
-        val selectedPoster = officialPoster ?: sameTitleBackdrop ?: emptyStateFallback
+        val selectedThumbnail = sameTitleBackdrop ?: officialPoster ?: ""
+        val selectedPoster = officialPoster ?: sameTitleBackdrop
         val selectedBackdrop = sameTitleBackdrop ?: officialPoster
 
         // No fake studio rotation: the list row must not claim "Warner Bros"
         // for a title that is not Warner's. Real network/company lands via
         // fetchFullMediaDetails() when the title is opened; until then the
-        // row is honestly labeled as catalog (no misleading channel).
-        val catalogAvatar = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=150&auto=format&fit=crop&q=80"
+        // row is honestly labeled as catalog (no misleading channel or art).
+        val catalogAvatar = ""
 
         val voteCount = item.voteCount ?: 0
         val voteAvg = item.voteAverage ?: 0.0
+        // Like count mirrors the real TMDB vote count, nothing invented.
         val likesCalculated = when {
             voteCount >= 1000 -> "${voteCount / 1000}K"
             else -> "$voteCount"
         }
-
-        val primaryGenreName = item.genreIds?.firstOrNull()?.let { GENRE_MAP[it] } ?: if (isTv) "TV Series" else "Cinema"
         val category = forcedCategory ?: when {
             isTv -> "Series / TV"
             else -> "Movies"
@@ -663,23 +661,23 @@ object TmdbRepository {
             StreamService.buildEmbedUrl(MediaType.MOVIE, item.id.toString())
         }
 
-        val publishedTime = if (releaseYear.isNotEmpty()) releaseYear else "Recent"
-
-        val tags = mutableListOf("#$primaryGenreName", if (isTv) "#TVSeries" else "#MovieStream", "#4KStream", "#CinemaHub")
-        if (voteAvg >= 8.0) tags.add("#TopRated")
-
-        val fullDescription = buildString {
-            append(item.overview ?: "Enjoy high definition streaming of $formattedTitle on YouTube.")
-            append("\n\n")
-            append("• Release: ${item.releaseDate ?: item.firstAirDate ?: "N/A"}\n")
-            append("• Format: 4K UHD Dolby Atmos\n")
-            append("• Streaming: VidSrc embed player with VidLink Pro fallback\n")
-            if (isTv) {
-                append("• Series Mode: Multi-Season & Multi-Episode Enabled")
-            }
-        }
+        val publishedTime = if (releaseYear.isNotEmpty()) releaseYear else ""
 
         val genresList = item.genreIds?.mapNotNull { GENRE_MAP[it] } ?: emptyList()
+        // Tags mirror real genres only — no invented marketing tags.
+        val tags = genresList.map { "#${it.replace(" ", "")}" }.toMutableList()
+        if (voteAvg >= 8.0) tags.add("#TopRated")
+
+        // Description is the TMDB overview, nothing else. No invented
+        // format/streaming claims; an empty overview stays empty.
+        val fullDescription = buildString {
+            append(item.overview.orEmpty())
+            val release = item.releaseDate ?: item.firstAirDate
+            if (!release.isNullOrBlank()) {
+                if (isNotEmpty()) append("\n\n")
+                append("• Release: $release")
+            }
+        }
 
         return VideoItem(
             id = "tmdb_${item.id}",
@@ -717,55 +715,6 @@ object TmdbRepository {
         )
     }
 
-    fun getSampleShorts(): List<ShortItem> {
-        return listOf(
-            ShortItem(
-                id = "short_dune",
-                title = "Dune 2 Desert Scene was Filmed in Real 50°C Dunes! #Dune #Cinema",
-                channelName = "Warner Bros. Pictures",
-                channelAvatarUrl = "https://yt3.googleusercontent.com/yVXKYrUI8hckCQdyUuOWf5ZJk2keT8WO3TV2b8RYk3RKgjz5Rh8v1UsH7Yz2j_hbDQRk32rZ_rM=s900-c-k-c0x00ffffff-no-rj",
-                likesCount = "1.2M",
-                commentsCount = "8.4K",
-                soundTrack = "Hans Zimmer - Paul's Dream (Official Audio)",
-                videoStreamUrl = "",
-                thumbnailUrl = "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80"
-            ),
-            ShortItem(
-                id = "short_stranger",
-                title = "Running Up That Hill - Season 4 Climax Scene! 📻✨",
-                channelName = "Netflix",
-                channelAvatarUrl = "https://yt3.googleusercontent.com/3b73AYEMMfa3SX5KJMeygio9smTPvrPrpicuQZbfQ_2DN7dV_ApiRM4CdYjSprEy1YYvt_9b=s900-c-k-c0x00ffffff-no-rj",
-                likesCount = "890K",
-                commentsCount = "12.1K",
-                soundTrack = "Kate Bush - Running Up That Hill",
-                videoStreamUrl = "",
-                thumbnailUrl = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80"
-            ),
-            ShortItem(
-                id = "short_oppenheimer",
-                title = "Christopher Nolan explaining the Trinity Test practical effect 💥",
-                channelName = "Universal Pictures",
-                channelAvatarUrl = "https://yt3.googleusercontent.com/PzIajPyy9_HJ-LR5S6q86JV9o2GjabXF54QJnr3PeHpOiGOXtroatGM3mB2QxQa_vkF5yuyu9hs=s900-c-k-c0x00ffffff-no-rj",
-                likesCount = "640K",
-                commentsCount = "3.2K",
-                soundTrack = "Ludwig Göransson - Can You Hear The Music",
-                videoStreamUrl = "",
-                thumbnailUrl = "https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=600&auto=format&fit=crop&q=80"
-            ),
-            ShortItem(
-                id = "short_spiderman",
-                title = "Across the Spider-Verse Animation Secret Breakdown! 🎨🕷️",
-                channelName = "Marvel Studios",
-                channelAvatarUrl = "https://yt3.googleusercontent.com/k7BhK-hm9_MbJbaKznHPhir6e4pWXbm1ppAHoseLIzRgoAPBMmH1IIhYKlXbGono25RD1OQwHQ=s900-c-k-c0x00ffffff-no-rj",
-                likesCount = "1.5M",
-                commentsCount = "19.5K",
-                soundTrack = "Metro Boomin - Am I Dreaming",
-                videoStreamUrl = "",
-                thumbnailUrl = "https://images.unsplash.com/photo-1635805737707-575885ab0820?w=600&auto=format&fit=crop&q=80"
-            )
-        )
-    }
-
     fun getStudioChannels(): List<ChannelItem> {
         return STUDIO_CHANNELS.mapIndexed { index, studio ->
             val logo = logoUrlForIds(studio.tmdbCompanyId, studio.tmdbNetworkId)
@@ -775,12 +724,14 @@ object TmdbRepository {
                 name = studio.name,
                 handle = "@${studio.name.lowercase().replace(" ", "").replace("/", "").replace("+", "plus")}",
                 avatarUrl = artwork?.avatarUrl ?: logo ?: studio.avatar,
-                bannerUrl = artwork?.bannerUrl ?: studio.banner,
+                bannerUrl = (artwork?.bannerUrl ?: studio.banner).takeIf { it.isNotBlank() },
+                // No invented totals, story rings, or pre-subscriptions:
+                // counts appear once getChannelMedia loads, subs come from prefs.
                 subscribers = studio.subs,
                 description = studio.description,
-                videosCount = "${35 + (index * 7)} videos",
-                hasNewStory = index % 2 == 0,
-                isSubscribed = true
+                videosCount = "",
+                hasNewStory = false,
+                isSubscribed = false
             )
         }
     }
@@ -804,27 +755,28 @@ object TmdbRepository {
                 name = matched.name,
                 handle = "@${matched.name.lowercase().replace(" ", "").replace("/", "").replace("+", "plus")}",
                 avatarUrl = artwork?.avatarUrl ?: logo ?: matched.avatar,
-                bannerUrl = artwork?.bannerUrl ?: matched.banner,
+                bannerUrl = (artwork?.bannerUrl ?: matched.banner).takeIf { it.isNotBlank() },
                 subscribers = matched.subs,
                 description = matched.description,
-                videosCount = "48 videos",
-                isSubscribed = true
+                videosCount = "",
+                isSubscribed = false
             )
         }
 
         val cleanHandle = fallbackHandle ?: "@${name.lowercase().replace(" ", "").replace("/", "").replace("+", "plus")}"
-        val cleanAvatar = fallbackAvatar ?: "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=150&auto=format&fit=crop&q=80"
-        val banner = "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80"
+        // Unknown channel: no stock photo, no invented counts or marketing
+        // copy. The page shows the name plus skeleton-then-empty/error.
+        val cleanAvatar = fallbackAvatar.orEmpty()
 
         return ChannelItem(
             id = "studio_${name.hashCode()}",
             name = name,
             handle = cleanHandle,
             avatarUrl = cleanAvatar,
-            bannerUrl = banner,
-            subscribers = "4.5M subscribers",
-            description = "Official channel for $name. Watch full movie premieres, original series episodes, and exclusive cinema releases in 4K UHD.",
-            videosCount = "36 videos",
+            bannerUrl = null,
+            subscribers = "",
+            description = "",
+            videosCount = "",
             isSubscribed = false
         )
     }
@@ -871,9 +823,8 @@ object TmdbRepository {
                 .replace(" ", "")
                 .replace("/", "")
                 .replace("+", "plus")}"
-            val channelAvatar = studioInfo?.let(::channelAvatarFor)
-                ?: "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=150&auto=format&fit=crop&q=80"
-            val subscriberText = studioInfo?.subs ?: "4.5M subscribers"
+            val channelAvatar = studioInfo?.let(::channelAvatarFor).orEmpty()
+            val subscriberText = studioInfo?.subs.orEmpty()
 
             // Search by the real TMDB company/network first. A text search for
             // "Netflix" or "Warner Bros" returns titles that merely mention

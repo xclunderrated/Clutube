@@ -9,6 +9,7 @@ data class TorrentSource(
     val releaseType: String = "BluRay", // BluRay, WEB-DL, HDTV
     val sizeBytes: Long = 0L,
     val sizeDisplay: String = "",
+    /** Live seeder count, or -1 when the indexer doesn't report one (never invented). */
     val seeders: Int = 0,
     val leechers: Int = 0,
     val provider: String = "YTS", // YTS, PirateBay, EZTV, Custom

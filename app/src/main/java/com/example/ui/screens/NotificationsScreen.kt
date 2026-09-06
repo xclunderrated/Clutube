@@ -371,6 +371,7 @@ private fun NotificationHeroCard(
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.THUMBNAIL,
+            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)
         ) {
@@ -424,8 +425,8 @@ private fun NotificationHeroCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = notification.title,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -542,6 +543,7 @@ private fun NotificationRow(
                 .width(128.dp)
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.THUMBNAIL,
+            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             shape = RoundedCornerShape(8.dp)
         ) {
@@ -593,7 +595,7 @@ private fun NotificationRow(
                 text = notification.title,
                 modifier = Modifier.padding(top = 4.dp),
                 fontSize = 13.sp,
-                fontWeight = if (notification.isRead) FontWeight.Medium else FontWeight.Bold,
+                fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -722,6 +724,7 @@ private fun UpcomingReleasesShelf(
                             .fillMaxWidth()
                             .aspectRatio(16f / 9f),
                         imagePreset = ImagePreset.COMPACT_THUMBNAIL,
+                        preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
                         isWatched = false,
                         shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
                     ) {
@@ -787,8 +790,8 @@ private fun UpcomingReleasesShelf(
                     Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
                         Text(
                             text = video.title,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Normal,
                             color = MaterialTheme.colorScheme.onBackground,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis

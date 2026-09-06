@@ -83,7 +83,7 @@ fun TorrentSourceDialog(
     onDismiss: () -> Unit,
     /** Season/complete packs for the requested S/E (manual file-pick only). */
     packs: List<TorrentSource> = emptyList(),
-    /** Real seasons/episodes from TMDB; when empty, falls back to safe ranges. */
+    /** Real seasons/episodes from TMDB; empty until loaded (never invented). */
     availableSeasons: List<Int> = emptyList(),
     availableEpisodeNumbers: List<Int> = emptyList(),
     /** e.g. "S01E02" — shown in the header so the target is unambiguous. */
@@ -221,12 +221,19 @@ fun TorrentSourceDialog(
                                 .horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            // Real seasons first; fallback keeps at least 5 so a
-                            // not-yet-loaded show can still be browsed.
-                            val seasons = availableSeasons.ifEmpty {
-                                val seasonCount = video.totalSeasons
-                                    .coerceAtLeast(selectedSeason ?: 1).coerceAtLeast(5)
-                                (1..seasonCount).toList()
+                            // Real seasons only. While TMDB hasn't loaded,
+                            // show just the current season — never an invented
+                            // 1..5 range.
+                            val seasons = availableSeasons.ifEmpty { listOf(selectedSeason ?: 1) }
+                            if (availableSeasons.isEmpty()) {
+                                Text(
+                                    text = "Loading seasons…",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .padding(end = 4.dp)
+                                        .align(Alignment.CenterVertically)
+                                )
                             }
                             seasons.forEach { seasonNum ->
                                 val isSelected = (selectedSeason ?: 1) == seasonNum
@@ -256,7 +263,19 @@ fun TorrentSourceDialog(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             val activeEp = selectedEpisode ?: 1
-                            val episodes = availableEpisodeNumbers.ifEmpty { (1..24).toList() }
+                            // Real episodes only — never an invented 1..24
+                            // range. Falls back to the current episode alone.
+                            val episodes = availableEpisodeNumbers.ifEmpty { listOf(activeEp) }
+                            if (availableEpisodeNumbers.isEmpty()) {
+                                Text(
+                                    text = "Loading…",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .padding(end = 4.dp)
+                                        .align(Alignment.CenterVertically)
+                                )
+                            }
                             episodes.forEach { epNum ->
                                 val isSelected = activeEp == epNum
                                 FilterChip(
@@ -601,16 +620,20 @@ private fun TorrentSourceItemCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = source.sizeDisplay,
+                        text = source.sizeDisplay.ifBlank { "—" },
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
 
                     Text(
-                        text = "▲ ${source.seeders} seeds",
+                        text = if (source.seeders >= 0) "▲ ${source.seeders} seeds" else "▲ — seeds",
                         fontSize = 11.sp,
-                        color = if (source.seeders > 10) MintEmerald else AmberWarning,
+                        color = when {
+                            source.seeders > 10 -> MintEmerald
+                            source.seeders >= 0 -> AmberWarning
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                         fontWeight = FontWeight.Medium
                     )
 

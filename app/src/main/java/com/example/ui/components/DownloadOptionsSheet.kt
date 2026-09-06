@@ -209,6 +209,7 @@ fun DownloadOptionsSheet(
                         modifier = Modifier
                             .width(64.dp)
                             .aspectRatio(16f / 9f),
+                        preferPoster = target is DownloadTarget.Movie,
                         shape = RoundedCornerShape(6.dp)
                     )
 
@@ -217,8 +218,8 @@ fun DownloadOptionsSheet(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = displayTitle,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Normal,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis

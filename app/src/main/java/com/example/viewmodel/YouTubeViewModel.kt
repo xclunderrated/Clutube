@@ -62,6 +62,10 @@ data class YouTubeUiState(
     val comments: List<CommentItem> = emptyList(),
     val currentPlayingVideo: VideoItem? = null,
     val relatedVideos: List<VideoItem> = emptyList(),
+    /** True while "More shows" is actively fetching (skeletons only then). */
+    val isRelatedLoading: Boolean = false,
+    /** Non-null when the related fetch failed and there is nothing to show. */
+    val relatedErrorMessage: String? = null,
     val tvEpisodes: List<TmdbEpisodeItem> = emptyList(),
     val totalSeasons: Int = 1,
     val selectedSeason: Int = 1,
@@ -141,6 +145,7 @@ data class YouTubeUiState(
     val pendingFullscreenKey: String? = null,
     val showHistoryScreen: Boolean = false,
     val showDownloadsScreen: Boolean = false,
+    val showSettingsScreen: Boolean = false,
     val downloads: List<DownloadEntity> = emptyList(),
     val activeDownloadSpeeds: Map<String, Long> = emptyMap(),
     val usedStorageBytes: Long = 0L,
@@ -376,6 +381,9 @@ class YouTubeViewModel : ViewModel() {
                     reloadCurrentCategory(scrollToTopOnSuccess = false)
                     loadUpcomingContent()
                     loadTrailerShorts()
+                    // A background network flap wipes nothing anymore, but an
+                    // empty Watch shelf still needs its fetch re-issued.
+                    refreshRelatedIfEmpty()
                 }
                 wasOnline = online
             }
@@ -464,7 +472,9 @@ class YouTubeViewModel : ViewModel() {
             val cached = localStore?.getCatalog(cacheKey)
             _uiState.update {
                 it.copy(
-                    relatedVideos = emptyList(),
+                    // Feed and Watch are independent: reloading the catalog
+                    // (including silent reconnect reloads) must never wipe
+                    // the Watch page's recommendations.
                     videos = cached?.videos?.map(TmdbRepository::applyCachedChannelArtwork)
                         ?: it.videos,
                     isLoading = cached == null,
@@ -720,6 +730,10 @@ class YouTubeViewModel : ViewModel() {
 
     fun setShowHistoryScreen(show: Boolean) {
         _uiState.update { it.copy(showHistoryScreen = show) }
+    }
+
+    fun setShowSettingsScreen(show: Boolean) {
+        _uiState.update { it.copy(showSettingsScreen = show) }
     }
 
     fun flushPlaybackProgress() {
@@ -1137,6 +1151,7 @@ class YouTubeViewModel : ViewModel() {
                         !isUnreleased(readyVideo.releaseDateIso ?: readyVideo.releaseDateFormatted)
                 },
                 showHistoryScreen = false,
+                showSettingsScreen = false,
                 // A channel page is a navigable surface, not a background
                 // layer. Selecting one of its titles must replace it with
                 // the Watch page instead of leaving the channel over the
@@ -1201,17 +1216,96 @@ class YouTubeViewModel : ViewModel() {
         }
 
         // Fetch Recommendations for "Up next"
-        if (tmdbIdInt != null) {
-            viewModelScope.launch {
-                val recsResult = TmdbRepository.getRecommendations(tmdbIdInt, isTv)
-                recsResult.onSuccess { recs ->
-                    if (recs.isNotEmpty() && _uiState.value.currentPlayingVideo?.playbackKey() == key) {
-                        _uiState.update { it.copy(relatedVideos = recs) }
+        refreshRelatedVideos(readyVideo, key)
+    }
+
+    /**
+     * Foreground/background safety net: re-issues the "More shows" fetch when
+     * the Watch page is open but has nothing to show (e.g. the fetch failed
+     * while backgrounded). No-op otherwise.
+     */
+    fun refreshRelatedIfEmpty() {
+        val state = _uiState.value
+        val video = state.currentPlayingVideo ?: return
+        if (!state.isPlayerExpanded) return
+        if (state.relatedVideos.isNotEmpty() || state.isRelatedLoading) return
+        refreshRelatedVideos(video, video.playbackKey())
+    }
+
+    /** Manual retry from the Watch page error row. */
+    fun retryRelatedVideos() {
+        val video = _uiState.value.currentPlayingVideo ?: return
+        refreshRelatedVideos(video, video.playbackKey(), force = true)
+    }
+
+    private fun refreshRelatedVideos(video: VideoItem, key: String, force: Boolean = false) {
+        val tmdbIdInt = video.tmdbId?.toIntOrNull()
+        if (tmdbIdInt == null) {
+            _uiState.update { current ->
+                if (current.currentPlayingVideo?.playbackKey() != key) current
+                else {
+                    val fallback = current.videos.filterNot { it.id == video.id }
+                    current.copy(
+                        relatedVideos = fallback.ifEmpty { current.relatedVideos },
+                        isRelatedLoading = false,
+                        relatedErrorMessage = if (fallback.isNotEmpty() || current.relatedVideos.isNotEmpty()) {
+                            null
+                        } else {
+                            "Couldn't load More shows."
+                        }
+                    )
+                }
+            }
+            return
+        }
+        if (_uiState.value.isOffline && _uiState.value.relatedVideos.isEmpty() && !force) {
+            _uiState.update { it.copy(isRelatedLoading = false, relatedErrorMessage = "You're offline. Connect to load More shows.") }
+            return
+        }
+        _uiState.update { current ->
+            if (current.currentPlayingVideo?.playbackKey() != key) current
+            // Only show skeletons when there is nothing to show; otherwise
+            // keep the last-good list visible while refreshing.
+            else current.copy(
+                isRelatedLoading = force || current.relatedVideos.isEmpty(),
+                relatedErrorMessage = null
+            )
+        }
+        viewModelScope.launch {
+            repeat(2) { attempt ->
+                if (attempt > 0) delay(2500)
+                if (_uiState.value.currentPlayingVideo?.playbackKey() != key) return@launch
+                val result = TmdbRepository.getRecommendations(tmdbIdInt, video.mediaType == MediaType.TV_SHOW)
+                val recs = result.getOrNull()
+                if (recs != null) {
+                    _uiState.update { current ->
+                        if (current.currentPlayingVideo?.playbackKey() != key) {
+                            current
+                        } else if (recs.isNotEmpty()) {
+                            current.copy(relatedVideos = recs, isRelatedLoading = false, relatedErrorMessage = null)
+                        } else if (current.relatedVideos.isEmpty()) {
+                            current.copy(isRelatedLoading = false, relatedErrorMessage = "No related titles found.")
+                        } else {
+                            current.copy(isRelatedLoading = false, relatedErrorMessage = null)
+                        }
+                    }
+                    return@launch
+                }
+                if (attempt == 1) {
+                    val message = result.exceptionOrNull()?.message?.takeIf { it.isNotBlank() }
+                        ?: "Couldn't load More shows."
+                    _uiState.update { current ->
+                        if (current.currentPlayingVideo?.playbackKey() != key) {
+                            current
+                        } else if (current.relatedVideos.isEmpty()) {
+                            current.copy(isRelatedLoading = false, relatedErrorMessage = message)
+                        } else {
+                            // Keep last-good list; it stays visible without error.
+                            current.copy(isRelatedLoading = false, relatedErrorMessage = null)
+                        }
                     }
                 }
             }
-        } else {
-            _uiState.update { it.copy(relatedVideos = _uiState.value.videos) }
         }
     }
 
@@ -1670,7 +1764,9 @@ class YouTubeViewModel : ViewModel() {
                 currentPlaybackSnapshot = null,
                 skipSegments = emptyList(),
                 activeSkipSegment = null,
-                pendingFullscreenKey = null
+                pendingFullscreenKey = null,
+                isRelatedLoading = false,
+                relatedErrorMessage = null
             )
         }
     }
@@ -2523,39 +2619,51 @@ class YouTubeViewModel : ViewModel() {
         season: Int = 1,
         episode: Int = 1
     ) {
-        val cleanId = idOrQuery.trim().ifEmpty { "157336" }
-        val cleanTitle = title.trim().ifEmpty { "Cinema Stream: $cleanId" }
-        val embedUrl = StreamService.buildEmbedUrl(
-            mediaType = if (isTv) MediaType.TV_SHOW else MediaType.MOVIE,
-            id = cleanId,
-            season = season,
-            episode = episode,
-            serverId = _uiState.value.selectedServerId,
-            vidSrcHost = _uiState.value.selectedVidSrcServerHost
-        )
-
-        val customVideo = VideoItem(
-            id = "custom_${System.currentTimeMillis()}",
-            title = "$cleanTitle [4K Stream]",
-            description = "Streaming seamlessly in high fidelity.\nMedia ID: $cleanId\nType: ${if (isTv) "TV Series S$season:E$episode" else "Movie Feature"}",
-            channelName = "Cinema Hub",
-            channelAvatarUrl = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=150&auto=format&fit=crop&q=80",
-            views = "",
-            publishedAt = "Premiered Today",
-            duration = if (isTv) "TV SERIES" else "2:15:00",
-            thumbnailUrl = "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&auto=format&fit=crop&q=80",
-            streamUrl = "",
-            embedStreamUrl = embedUrl,
-            mediaType = if (isTv) MediaType.TV_SHOW else MediaType.MOVIE,
-            tmdbId = cleanId,
-            currentSeason = season,
-            currentEpisode = episode,
-            category = "Movies",
-            tags = listOf("#MovieStream", "#MovieNight", "#Streaming", "#4K")
-        )
-
-        playVideo(customVideo, expand = true)
-        _uiState.update { it.copy(showServerDialog = false, showCreateSheet = false) }
+        // Honest custom stream: resolve the TMDB ID to the real title and
+        // artwork first. Unknown IDs show "Title not found" instead of a
+        // fabricated card with stock photos and invented metadata.
+        val cleanId = idOrQuery.trim()
+        if (cleanId.toIntOrNull() == null) {
+            _uiState.update { it.copy(userFeedbackMessage = "Title not found — enter a valid TMDB ID") }
+            return
+        }
+        val mediaType = if (isTv) MediaType.TV_SHOW else MediaType.MOVIE
+        val safeSeason = season.coerceAtLeast(1)
+        val safeEpisode = episode.coerceAtLeast(1)
+        viewModelScope.launch {
+            val probe = VideoItem(
+                id = "custom_$cleanId",
+                title = title.trim().ifEmpty { cleanId },
+                description = "",
+                channelName = "",
+                channelAvatarUrl = "",
+                publishedAt = "",
+                duration = "",
+                thumbnailUrl = "",
+                mediaType = mediaType,
+                tmdbId = cleanId,
+                currentSeason = safeSeason,
+                currentEpisode = safeEpisode
+            )
+            TmdbRepository.fetchFullMediaDetails(probe)
+                .onSuccess { enriched ->
+                    val hasArt = !enriched.posterUrl.isNullOrBlank() ||
+                        enriched.thumbnailUrl.isNotBlank() ||
+                        !enriched.backdropUrl.isNullOrBlank()
+                    if (enriched.title.isBlank() || !hasArt) {
+                        _uiState.update { it.copy(userFeedbackMessage = "Title not found for ID $cleanId") }
+                        return@onSuccess
+                    }
+                    playVideo(
+                        enriched.copy(currentSeason = safeSeason, currentEpisode = safeEpisode),
+                        expand = true
+                    )
+                    _uiState.update { it.copy(showServerDialog = false, showCreateSheet = false) }
+                }
+                .onFailure {
+                    _uiState.update { it.copy(userFeedbackMessage = "Title not found for ID $cleanId") }
+                }
+        }
     }
 
     fun nextShort() {

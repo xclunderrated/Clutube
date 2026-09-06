@@ -99,7 +99,7 @@ fun CompactRelatedVideoCard(
             .testTag("compact_related_video_card_${video.id}"),
         verticalAlignment = Alignment.Top
     ) {
-        // Compact 16:9 Thumbnail displaying uncropped poster with ambient background
+        // Compact 16:9 Thumbnail showing poster WITH name for catalog.
         FittedMediaThumbnail(
             thumbnailUrl = video.thumbnailUrl,
             backdropUrl = video.backdropUrl,
@@ -109,6 +109,7 @@ fun CompactRelatedVideoCard(
                 .width(132.dp)
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.COMPACT_THUMBNAIL,
+            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = isWatched,
             shape = RoundedCornerShape(8.dp)
         ) {
@@ -209,15 +210,15 @@ fun CompactRelatedVideoCard(
         ) {
             Text(
                 text = video.title,
-                fontSize = 13.5.sp,
-                fontWeight = FontWeight.Medium,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                lineHeight = 18.sp
+                lineHeight = 17.sp
             )
 
-            Spacer(modifier = Modifier.height(3.dp))
+            Spacer(modifier = Modifier.height(2.dp))
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -225,10 +226,10 @@ fun CompactRelatedVideoCard(
             ) {
                 Text(
                     text = video.channelName,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 16.sp,
+                    lineHeight = 15.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
@@ -263,13 +264,13 @@ fun CompactRelatedVideoCard(
                 }.joinToString(" • ")
             }
             if (metadata.isNotBlank()) {
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(1.dp))
                 Text(
                     text = metadata,
-                    fontSize = 11.5.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 15.sp,
+                    lineHeight = 14.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -279,7 +280,7 @@ fun CompactRelatedVideoCard(
                 Text(
                     text = continueLabel,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Normal,
                     color = YouTubeRed,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
