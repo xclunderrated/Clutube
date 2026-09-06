@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
@@ -74,15 +75,14 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.VideoRepository
 import com.example.model.MediaType
-import com.example.model.ShortItem
 import com.example.model.VideoItem
 import com.example.model.WatchHistoryEntry
 import com.example.model.formatPlaybackTime
+import com.example.model.playbackKey
+import com.example.model.titleGroupKey
 import com.example.model.releaseAlertId
 import com.example.ui.components.FilterPillRow
 import com.example.ui.components.FittedMediaThumbnail
-import com.example.ui.components.ShortsShelf
-import com.example.ui.components.ShortsShelfSkeleton
 import com.example.ui.components.VideoCard
 import com.example.ui.components.VideoCardSkeleton
 import com.example.ui.theme.YouTubeRed
@@ -100,12 +100,13 @@ private val ContinueCardShape = RoundedCornerShape(10.dp)
 @Composable
 fun HomeScreen(
     videos: List<VideoItem>,
-    shorts: List<ShortItem>,
     continueWatching: List<WatchHistoryEntry> = emptyList(),
     recentWatched: List<WatchHistoryEntry> = emptyList(),
     showContinueWatching: Boolean = false,
     selectedCategory: String,
     isLoading: Boolean,
+    isRefreshing: Boolean = false,
+    scrollToTopNonce: Long = 0L,
     isLoadingMore: Boolean = false,
     feedErrorMessage: String? = null,
     isOffline: Boolean = false,
@@ -116,7 +117,6 @@ fun HomeScreen(
     onRefresh: () -> Unit = {},
     onVideoClick: (VideoItem) -> Unit,
     onContinueWatchingClick: (WatchHistoryEntry) -> Unit = { onVideoClick(it.video) },
-    onShortClick: (Int) -> Unit,
     onSaveToWatchLater: (VideoItem) -> Unit,
     onShare: (VideoItem) -> Unit,
     onAddToQueue: (VideoItem) -> Unit = {},
@@ -130,6 +130,10 @@ fun HomeScreen(
     releaseAlertIds: Set<String> = emptySet(),
     onToggleReleaseAlert: (VideoItem) -> Unit = {},
     onOpenServerDialog: () -> Unit,
+    savedVideoIds: Set<String> = emptySet(),
+    progressFractions: Map<String, Float> = emptyMap(),
+    continueLabels: Map<String, String> = emptyMap(),
+    onRemoveContinueWatching: (WatchHistoryEntry) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(
@@ -177,8 +181,16 @@ fun HomeScreen(
         val recentWatchedIds = remember(visibleRecentWatched) {
             visibleRecentWatched.map { it.video.id }.toSet()
         }
-        val feedVideos = remember(visibleVideos, recentWatchedIds) {
-            visibleVideos.filterNot { it.id in recentWatchedIds }
+        // When the shelf is visible, its titles leave the flat feed so the
+        // same show never appears twice with disagreeing episodes/progress.
+        val continueGroupKeys = remember(visibleContinueWatching) {
+            visibleContinueWatching.map { it.titleGroupKey() }.toSet()
+        }
+        val feedVideos = remember(visibleVideos, recentWatchedIds, continueGroupKeys, showContinueWatching) {
+            visibleVideos.filterNot { video ->
+                video.id in recentWatchedIds ||
+                    (showContinueWatching && video.titleGroupKey() in continueGroupKeys)
+            }
         }
         val firstChunk = remember(feedVideos) {
             if (feedVideos.size > 2) feedVideos.subList(0, 2) else feedVideos
@@ -187,6 +199,20 @@ fun HomeScreen(
             if (feedVideos.size > 2) feedVideos.subList(2, feedVideos.size) else emptyList()
         }
         val latestOnLoadMore = rememberUpdatedState(onLoadMore)
+        // Hoisted so a Home re-tap / refresh can scroll either layout to the top.
+        val listState = rememberLazyListState()
+        val gridState = rememberLazyGridState()
+
+        LaunchedEffect(scrollToTopNonce) {
+            if (scrollToTopNonce != 0L) {
+                try {
+                    listState.scrollToItem(0)
+                } catch (_: Exception) {}
+                try {
+                    gridState.scrollToItem(0)
+                } catch (_: Exception) {}
+            }
+        }
 
         Column(modifier = Modifier.fillMaxSize()) {
             // Topic Filters
@@ -198,13 +224,13 @@ fun HomeScreen(
                 onExploreClick = onOpenServerDialog
             )
 
-            // Non-jumping loading indicator
+            // Non-jumping loading indicator (initial load + background refresh)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(2.dp)
             ) {
-                if (isLoading) {
+                if (isLoading || isRefreshing) {
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxSize(),
                         color = YouTubeRed,
@@ -245,18 +271,12 @@ fun HomeScreen(
                 }
             }
 
-            var isRefreshing by remember { mutableStateOf(false) }
             val pullToRefreshState = rememberPullToRefreshState()
-
-            LaunchedEffect(isLoading) {
-                if (!isLoading) isRefreshing = false
-            }
 
             PullToRefreshBox(
                 isRefreshing = isRefreshing,
                 onRefresh = {
-                    if (!isLoading && !isLoadingMore) {
-                        isRefreshing = true
+                    if (!isLoading && !isRefreshing && !isLoadingMore) {
                         onRefresh()
                     }
                 },
@@ -282,9 +302,6 @@ fun HomeScreen(
                         items(count = 2, contentType = { "video_skeleton" }) {
                             VideoCardSkeleton()
                         }
-                        item(span = { GridItemSpan(gridColumns) }, contentType = "shorts_skeleton") {
-                            ShortsShelfSkeleton()
-                        }
                         items(count = 6, contentType = { "video_skeleton" }) {
                             VideoCardSkeleton()
                         }
@@ -297,9 +314,6 @@ fun HomeScreen(
                     ) {
                         items(count = 2, contentType = { "video_skeleton" }) {
                             VideoCardSkeleton()
-                        }
-                        item(contentType = "shorts_skeleton") {
-                            ShortsShelfSkeleton()
                         }
                         items(count = 4, contentType = { "video_skeleton" }) {
                             VideoCardSkeleton()
@@ -332,18 +346,16 @@ fun HomeScreen(
                 }
                 } else if (isWide) {
                 // Tablet Multi-Column Responsive Grid Layout with Infinite Scroll
-                val gridState = rememberLazyGridState()
-
-                val shouldPrefetch by remember(gridState, isLoadingMore, isLoading) {
+                val shouldPrefetch by remember(gridState, isLoadingMore, isLoading, isRefreshing) {
                     derivedStateOf {
                         val layoutInfo = gridState.layoutInfo
                         val total = layoutInfo.totalItemsCount
                         val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                        total > 0 && lastVisible >= total - 3 && !isLoading && !isLoadingMore
+                        total > 0 && lastVisible >= total - 3 && !isLoading && !isRefreshing && !isLoadingMore
                     }
                 }
 
-                LaunchedEffect(gridState, isLoadingMore, isLoading) {
+                LaunchedEffect(gridState, isLoadingMore, isLoading, isRefreshing) {
                     snapshotFlow { shouldPrefetch }
                         .distinctUntilChanged()
                         .collect { shouldLoad ->
@@ -378,6 +390,9 @@ fun HomeScreen(
                             onDownload = onDownloadVideo?.let { { it(video) } },
                             onAddToQueue = { onAddToQueue(video) },
                             isWatched = video.id in watchedVideoIds,
+                            isSaved = video.id in savedVideoIds,
+                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
+                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
                             onToggleWatched = { onToggleWatched(video) },
                             onNotInterested = { onNotInterested(video) },
                             onNotRecommendChannel = { onNotRecommendChannel(video) },
@@ -407,6 +422,9 @@ fun HomeScreen(
                             onDownload = onDownloadLambda,
                             onAddToQueue = { onAddToQueue(video) },
                             isWatched = video.id in watchedVideoIds,
+                            isSaved = video.id in savedVideoIds,
+                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
+                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
                             onToggleWatched = { onToggleWatched(video) },
                             onNotInterested = { onNotInterested(video) },
                             onNotRecommendChannel = { onNotRecommendChannel(video) },
@@ -425,7 +443,8 @@ fun HomeScreen(
                             ContinueWatchingSection(
                                 items = visibleContinueWatching,
                                 onItemClick = onContinueWatchingClick,
-                                onDownloadClick = onDownloadVideo
+                                onDownloadClick = onDownloadVideo,
+                                onRemoveEntry = onRemoveContinueWatching
                             )
                         }
                     }
@@ -451,6 +470,9 @@ fun HomeScreen(
                             onDownload = onDownloadLambda,
                             onAddToQueue = { onAddToQueue(video) },
                             isWatched = video.id in watchedVideoIds,
+                            isSaved = video.id in savedVideoIds,
+                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
+                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
                             onToggleWatched = { onToggleWatched(video) },
                             onNotInterested = { onNotInterested(video) },
                             onNotRecommendChannel = { onNotRecommendChannel(video) },
@@ -480,18 +502,16 @@ fun HomeScreen(
                 }
                 } else {
                 // Mobile Single-Column Layout with Infinite Scroll
-                val listState = rememberLazyListState()
-
-                val shouldPrefetch by remember(listState, isLoadingMore, isLoading) {
+                val shouldPrefetch by remember(listState, isLoadingMore, isLoading, isRefreshing) {
                     derivedStateOf {
                         val layoutInfo = listState.layoutInfo
                         val total = layoutInfo.totalItemsCount
                         val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                        total > 0 && lastVisible >= total - 3 && !isLoading && !isLoadingMore
+                        total > 0 && lastVisible >= total - 3 && !isLoading && !isRefreshing && !isLoadingMore
                     }
                 }
 
-                LaunchedEffect(listState, isLoadingMore, isLoading) {
+                LaunchedEffect(listState, isLoadingMore, isLoading, isRefreshing) {
                     snapshotFlow { shouldPrefetch }
                         .distinctUntilChanged()
                         .collect { shouldLoad ->
@@ -521,6 +541,9 @@ fun HomeScreen(
                             onDownload = onDownloadVideo?.let { { it(video) } },
                             onAddToQueue = { onAddToQueue(video) },
                             isWatched = video.id in watchedVideoIds,
+                            isSaved = video.id in savedVideoIds,
+                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
+                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
                             onToggleWatched = { onToggleWatched(video) },
                             onNotInterested = { onNotInterested(video) },
                             onNotRecommendChannel = { onNotRecommendChannel(video) },
@@ -550,6 +573,9 @@ fun HomeScreen(
                             onDownload = onDownloadLambda,
                             onAddToQueue = { onAddToQueue(video) },
                             isWatched = video.id in watchedVideoIds,
+                            isSaved = video.id in savedVideoIds,
+                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
+                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
                             onToggleWatched = { onToggleWatched(video) },
                             onNotInterested = { onNotInterested(video) },
                             onNotRecommendChannel = { onNotRecommendChannel(video) },
@@ -564,17 +590,8 @@ fun HomeScreen(
                             ContinueWatchingSection(
                                 items = visibleContinueWatching,
                                 onItemClick = onContinueWatchingClick,
-                                onDownloadClick = onDownloadVideo
-                            )
-                        }
-                    }
-
-                    // Dedicated Shorts Shelf Item
-                    if (shorts.isNotEmpty()) {
-                        item(key = "home_shorts_shelf", contentType = "shorts_shelf") {
-                            ShortsShelf(
-                                shorts = shorts,
-                                onShortClick = onShortClick
+                                onDownloadClick = onDownloadVideo,
+                                onRemoveEntry = onRemoveContinueWatching
                             )
                         }
                     }
@@ -600,6 +617,9 @@ fun HomeScreen(
                             onDownload = onDownloadLambda,
                             onAddToQueue = { onAddToQueue(video) },
                             isWatched = video.id in watchedVideoIds,
+                            isSaved = video.id in savedVideoIds,
+                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
+                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
                             onToggleWatched = { onToggleWatched(video) },
                             onNotInterested = { onNotInterested(video) },
                             onNotRecommendChannel = { onNotRecommendChannel(video) },
@@ -669,6 +689,7 @@ private fun ContinueWatchingSection(
     items: List<WatchHistoryEntry>,
     onItemClick: (WatchHistoryEntry) -> Unit,
     onDownloadClick: ((VideoItem) -> Unit)? = null,
+    onRemoveEntry: ((WatchHistoryEntry) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -715,7 +736,8 @@ private fun ContinueWatchingSection(
                 ContinueWatchingCard(
                     entry = video,
                     onClick = { onItemClick(video) },
-                    onDownload = onDownloadClick?.let { { it(video.video) } }
+                    onDownload = onDownloadClick?.let { { it(video.video) } },
+                    onRemove = onRemoveEntry?.let { { it(video) } }
                 )
             }
         }
@@ -729,6 +751,7 @@ private fun ContinueWatchingCard(
     entry: WatchHistoryEntry,
     onClick: () -> Unit,
     onDownload: (() -> Unit)? = null,
+    onRemove: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val video = entry.video
@@ -777,7 +800,7 @@ private fun ContinueWatchingCard(
             ) {
                 Text(
                     text = if (video.mediaType == MediaType.TV_SHOW) {
-                        "S${video.currentSeason}:E${video.currentEpisode}"
+                        "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}"
                     } else {
                         video.duration
                     },
@@ -787,13 +810,15 @@ private fun ContinueWatchingCard(
                 )
             }
 
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth(entry.progressFraction)
-                    .height(3.dp)
-                    .background(YouTubeRed)
-            )
+            if (entry.progressFraction > com.example.model.MIN_VISIBLE_PROGRESS_FRACTION) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth(entry.progressFraction.coerceIn(0f, 1f))
+                        .height(3.dp)
+                        .background(YouTubeRed)
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(4.dp))
@@ -852,7 +877,7 @@ private fun ContinueWatchingCard(
                     ) {
                         if (onDownload != null) {
                             val dlText = if (video.mediaType == MediaType.TV_SHOW) {
-                                "Download (S${video.currentSeason}:E${video.currentEpisode})"
+                                "Download (S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)})"
                             } else {
                                 "Download"
                             }
@@ -862,6 +887,16 @@ private fun ContinueWatchingCard(
                                 onClick = {
                                     menuExpanded = false
                                     onDownload()
+                                }
+                            )
+                        }
+                        if (onRemove != null) {
+                            DropdownMenuItem(
+                                text = { Text("Remove from Continue watching", fontSize = 12.sp) },
+                                leadingIcon = { Icon(Icons.Default.Close, null, modifier = Modifier.size(16.dp)) },
+                                onClick = {
+                                    menuExpanded = false
+                                    onRemove()
                                 }
                             )
                         }

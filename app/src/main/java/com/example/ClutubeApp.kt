@@ -19,6 +19,9 @@ class ClutubeApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         ReleaseNotificationPublisher.ensureChannel(this)
+        // Initialize the download manager early so interrupted downloads auto-resume
+        // on cold start without requiring the user to open the app UI.
+        com.example.data.download.DownloadManager.getInstance(this)
     }
 
     override fun newImageLoader(): ImageLoader {

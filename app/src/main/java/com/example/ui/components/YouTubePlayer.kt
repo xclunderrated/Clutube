@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.collectAsState
 import com.example.data.StreamService
 import com.example.model.VideoItem
+import com.example.model.playbackKey
 import com.example.ui.theme.YouTubeRed
 import com.example.util.PlayerViewManager
 import kotlinx.coroutines.delay
@@ -78,6 +79,12 @@ fun YouTubePlayer(
     onRetryPlayback: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    // Per-host configure gate: Compose re-runs update on every playback
+    // tick (~1Hz). Without this, each tick re-set the layer type,
+    // re-registered touch listeners, and re-injected presentation CSS into
+    // the provider page — the main source of VidSrc stutter. Held in
+    // composition (one holder per AndroidView host), never in a view tag.
+    val lastConfiguredKey = remember { mutableStateOf<String?>(null) }
     val isCleanOverlayLoading by PlayerViewManager.isCleanOverlayLoading.collectAsState()
     val isPlayerLoading by PlayerViewManager.isPlayerLoading.collectAsState()
     val hasError by PlayerViewManager.hasPlayerError.collectAsState()
@@ -121,6 +128,7 @@ fun YouTubePlayer(
                             playWhenReady = playWhenReady,
                             onSwipeDown = onSwipeDown,
                             onGestureFeedback = showGestureFeedback,
+                            lastConfiguredKey = lastConfiguredKey,
                         )
                     }
                 },
@@ -134,6 +142,7 @@ fun YouTubePlayer(
                         playWhenReady = playWhenReady,
                         onSwipeDown = onSwipeDown,
                         onGestureFeedback = showGestureFeedback,
+                        lastConfiguredKey = lastConfiguredKey,
                     )
                 },
                 onRelease = { container -> PlayerViewManager.detachFromContainerIfCurrent(container) },
@@ -264,8 +273,14 @@ private fun FrameLayout.configurePlayerWebView(
     resumePositionSeconds: Double,
     playWhenReady: Boolean,
     onSwipeDown: (() -> Unit)?,
-    onGestureFeedback: ((String) -> Unit)?
+    onGestureFeedback: ((String) -> Unit)?,
+    lastConfiguredKey: androidx.compose.runtime.MutableState<String?>,
 ) {
+    val configKey = video.playbackKey() + "|" + serverId + "|" + touchEnabled
+    if (lastConfiguredKey.value == configKey) {
+        return
+    }
+    lastConfiguredKey.value = configKey
     val webView = PlayerViewManager.attachToContainer(
         context = context,
         container = this,
@@ -361,8 +376,7 @@ private fun WebView.setGestureHandler(
                 event.x < width * 0.22f || event.x > width * 0.78f
             ) return
             longPressActive = true
-            PlayerViewManager.setPlaybackRate(2.0)
-            onGestureFeedback?.invoke("2x speed")
+            onGestureFeedback?.invoke("Press & hold")
         }
     })
 
@@ -447,8 +461,7 @@ private fun WebView.setGestureHandler(
                     )
                 }
                 if (longPressActive) {
-                    PlayerViewManager.setPlaybackRate(1.0)
-                    onGestureFeedback?.invoke("1x speed")
+                    onGestureFeedback?.invoke("Released")
                 }
                 gestureMode = GestureMode.NONE
                 longPressActive = false

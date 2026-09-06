@@ -38,6 +38,8 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.model.ChannelItem
 import com.example.model.VideoItem
+import com.example.model.playbackKey
+import com.example.model.titleGroupKey
 import com.example.model.releaseAlertId
 import com.example.ui.components.StudioLogoAvatar
 import com.example.ui.components.VideoCard
@@ -64,13 +66,19 @@ fun SubscriptionsScreen(
     releaseAlertIds: Set<String> = emptySet(),
     onToggleReleaseAlert: (VideoItem) -> Unit = {},
     onDownloadVideo: ((VideoItem) -> Unit)? = null,
+    savedVideoIds: Set<String> = emptySet(),
+    progressFractions: Map<String, Float> = emptyMap(),
+    continueLabels: Map<String, String> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     var selectedSubFilter by remember { mutableStateOf("All") }
     var selectedChannelFilterId by remember { mutableStateOf<String?>(null) }
-    val filters = remember { listOf("All", "Movies", "Series", "Today", "Shorts", "Continue watching") }
+    // "Today" was a no-op pill (publishedAt carries no reliable timestamp),
+    // so it is removed rather than lying. "Continue watching" is real: it
+    // shows only titles with live resume points.
+    val filters = remember { listOf("All", "Movies", "Series", "Shorts", "Continue watching") }
 
-    val filteredVideos = remember(videos, selectedSubFilter, selectedChannelFilterId, channels) {
+    val filteredVideos = remember(videos, selectedSubFilter, selectedChannelFilterId, channels, progressFractions) {
         var list = videos
         if (selectedChannelFilterId != null) {
             val selectedChannel = channels.find { it.id == selectedChannelFilterId }
@@ -82,6 +90,9 @@ fun SubscriptionsScreen(
             "Movies" -> list.filter { it.mediaType == com.example.model.MediaType.MOVIE }
             "Series" -> list.filter { it.mediaType == com.example.model.MediaType.TV_SHOW }
             "Shorts" -> list.filter { it.mediaType == com.example.model.MediaType.VIDEO || it.duration == "SHORT" }
+            "Continue watching" -> list.filter { video ->
+                (progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()]) != null
+            }
             else -> list
         }
     }
@@ -221,6 +232,9 @@ fun SubscriptionsScreen(
                         onDownload = onDownloadLambda,
                         onAddToQueue = { onAddToQueue(video) },
                         isWatched = video.id in watchedVideoIds,
+                        isSaved = video.id in savedVideoIds,
+                        progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
+                        continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
                         onToggleWatched = { onToggleWatched(video) },
                         onNotInterested = { onNotInterested(video) },
                         onNotRecommendChannel = { onNotRecommendChannel(video) },

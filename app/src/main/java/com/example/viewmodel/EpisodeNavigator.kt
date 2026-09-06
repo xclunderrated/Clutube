@@ -1,6 +1,7 @@
 package com.example.viewmodel
 
 import com.example.data.tmdb.TmdbEpisodeItem
+import com.example.model.isUnreleased
 
 data class NextEpisode(
     val season: Int,
@@ -33,6 +34,7 @@ object EpisodeNavigator {
         val nextInCurrentSeason = currentSeasonEpisodes
             .asSequence()
             .filter { it.episodeNumber > safeEpisode }
+            .filterNot { isUnreleased(it.airDate) }
             .sortedBy { it.episodeNumber }
             .firstOrNull()
 

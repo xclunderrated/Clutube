@@ -87,7 +87,7 @@ class SettingsManagerTest {
 
     @Test
     fun `history is capped and progress is normalized`() {
-        val entries = (1..55).map { index ->
+        val entries = (1..205).map { index ->
             val video = testVideo(id = "video-$index")
             WatchHistoryEntry(
                 key = video.playbackKey(),
@@ -101,9 +101,19 @@ class SettingsManagerTest {
         manager.saveWatchHistoryEntries(entries)
         val saved = manager.getWatchHistoryEntries()
 
-        assertEquals(50, saved.size)
+        assertEquals(SettingsManager.HISTORY_LIMIT, saved.size)
         assertEquals(100, saved.first().positionSeconds)
         assertEquals(0, saved[1].positionSeconds)
+    }
+
+    @Test
+    fun `corrupt history payload is backed up instead of wiping resume points`() {
+        prefs.edit().putString(KEY_NEW_HISTORY, "{not valid json").commit()
+
+        val loaded = SettingsManager(context).getWatchHistoryEntries()
+
+        assertTrue(loaded.isEmpty())
+        assertTrue(prefs.contains(KEY_CORRUPT_BACKUP))
     }
 
     @Test
@@ -172,5 +182,6 @@ class SettingsManagerTest {
         const val PREFS_NAME = "clutube_app_preferences"
         const val KEY_LEGACY_HISTORY = "watch_history_json"
         const val KEY_NEW_HISTORY = "watch_history_entries_json"
+        const val KEY_CORRUPT_BACKUP = "watch_history_entries_corrupt_backup"
     }
 }

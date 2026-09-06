@@ -100,6 +100,8 @@ import com.example.model.VideoItem
 import com.example.model.WatchLaterSort
 import com.example.model.formatPlaybackTime
 import com.example.model.playbackKey
+import com.example.model.titleGroupKey
+import com.example.model.toContinueUiModel
 import com.example.ui.components.FittedMediaThumbnail
 import com.example.ui.components.LocalProfileAvatar
 import com.example.ui.components.OfflineVideoPlayer
@@ -153,6 +155,17 @@ fun YouScreen(
     downloadsCount: Int = 0,
     downloads: List<DownloadEntity> = emptyList(),
     onOpenDownloads: () -> Unit = {},
+    onDownloadSubtitles: (String) -> Unit = {},
+    onSubtitleOffsetChanged: (String, Long) -> Unit = { _, _ -> },
+    onSubtitleTrackChanged: (String, String?) -> Unit = { _, _ -> },
+    offlineSubtitleLanguage: String = "en",
+    isSubtitleAutoDownload: Boolean = true,
+    wyzieApiKey: String = "",
+    subdlApiKey: String = "",
+    onOfflineSubtitleLanguageSelected: (String) -> Unit = {},
+    onSubtitleAutoDownloadChanged: (Boolean) -> Unit = {},
+    onWyzieApiKeyChanged: (String) -> Unit = {},
+    onSubdlApiKeyChanged: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var isEditProfileOpen by remember { mutableStateOf(false) }
@@ -184,13 +197,24 @@ fun YouScreen(
     // Full screen offline player dialog
     if (playingOfflineDownload != null) {
         val item = playingOfflineDownload!!
+        // Refresh from the live list so fetched sidecars appear without reopen.
+        androidx.compose.runtime.LaunchedEffect(downloads) {
+            downloads.firstOrNull { it.id == item.id }?.let { playingOfflineDownload = it }
+        }
         OfflineVideoPlayer(
             title = item.seriesTitle ?: item.title,
             subtitle = if (item.seriesTitle != null) item.title else item.quality,
             localFilePath = item.localFilePath,
             serverName = item.serverName,
             subtitleCc = item.subtitleCc,
-            onClose = { playingOfflineDownload = null }
+            onClose = { playingOfflineDownload = null },
+            subtitleFilePath = item.subtitleFilePath,
+            initialSubtitleOffsetMs = item.subtitleOffsetMs,
+            onSubtitleOffsetChanged = { onSubtitleOffsetChanged(item.id, it) },
+            onRequestSubtitles = { onDownloadSubtitles(item.id) },
+            subtitleLanguage = item.subtitleLanguage,
+            initialTrackId = item.selectedSubtitleTrackId,
+            onSubtitleTrackChanged = { onSubtitleTrackChanged(item.id, it) }
         )
         return
     }
@@ -364,10 +388,20 @@ fun YouScreen(
                 key = { "saved_${it.id}" },
                 contentType = { "saved_video" }
             ) { video ->
-                val historyEntry = watchHistory.firstOrNull { it.video.id == video.id || it.key == video.playbackKey() }
+                // Exact episode first, then the series-latest entry — never a
+                // bare id match that could surface another episode's progress.
+                val historyEntry = watchHistory.firstOrNull { it.key == video.playbackKey() }
+                    ?: watchHistory
+                        .filter { it.titleGroupKey() == video.titleGroupKey() }
+                        .maxWithOrNull(
+                            compareBy<WatchHistoryEntry> { it.lastWatchedAtMillis }
+                                .thenBy { it.positionSeconds }
+                        )
+                val savedUiModel = historyEntry?.takeIf { !it.completed }?.toContinueUiModel()
                 SavedVideoRow(
                     video = video,
-                    progressFraction = historyEntry?.progressFraction ?: 0f,
+                    progressFraction = savedUiModel?.progressFraction ?: 0f,
+                    progressLabel = savedUiModel?.label,
                     isSelected = video.id in selectedSavedIds,
                     onClick = { onVideoClick(video) },
                     onLongClick = {
@@ -769,9 +803,16 @@ fun YouScreen(
     if (isPlaybackPreferencesOpen) {
         var qualityExpanded by remember { mutableStateOf(false) }
         var subtitlesExpanded by remember { mutableStateOf(false) }
+        var offlineLangExpanded by remember { mutableStateOf(false) }
+        var wyzieDraft by remember(wyzieApiKey, isPlaybackPreferencesOpen) { mutableStateOf(wyzieApiKey) }
+        var subdlDraft by remember(subdlApiKey, isPlaybackPreferencesOpen) { mutableStateOf(subdlApiKey) }
 
         AlertDialog(
-            onDismissRequest = { isPlaybackPreferencesOpen = false },
+            onDismissRequest = {
+                if (wyzieDraft.trim() != wyzieApiKey) onWyzieApiKeyChanged(wyzieDraft)
+                if (subdlDraft.trim() != subdlApiKey) onSubdlApiKeyChanged(subdlDraft)
+                isPlaybackPreferencesOpen = false
+            },
             title = { Text("Playback preferences") },
             text = {
                 Column(
@@ -855,10 +896,113 @@ fun YouScreen(
                             }
                         }
                     }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                    Text(
+                        text = "Offline subtitles",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    // Default language for downloaded sidecars.
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        TextButton(
+                            onClick = { offlineLangExpanded = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("offline_subtitle_lang_picker")
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Download language")
+                                Text(
+                                    text = when (offlineSubtitleLanguage) {
+                                        "es" -> "Spanish"
+                                        "off" -> "Off"
+                                        else -> "English"
+                                    },
+                                    color = YouTubeRed,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = offlineLangExpanded,
+                            onDismissRequest = { offlineLangExpanded = false }
+                        ) {
+                            listOf("en" to "English", "es" to "Spanish", "off" to "Off").forEach { (code, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        offlineLangExpanded = false
+                                        onOfflineSubtitleLanguageSelected(code)
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Auto-fetch sidecars when downloads finish.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Auto-download subtitles",
+                            fontSize = 14.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = isSubtitleAutoDownload,
+                            onCheckedChange = onSubtitleAutoDownloadChanged,
+                            modifier = Modifier.testTag("offline_subtitle_auto_switch")
+                        )
+                    }
+
+                    // Optional BYOK keys. Blank = embedded key, then keyless
+                    // sources. Saved on dismiss.
+                    OutlinedTextField(
+                        value = wyzieDraft,
+                        onValueChange = { wyzieDraft = it },
+                        label = { Text("Wyzie API key (optional)", fontSize = 12.sp) },
+                        placeholder = { Text("store.wyzie.io/redeem", fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("wyzie_api_key_field"),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = subdlDraft,
+                        onValueChange = { subdlDraft = it },
+                        label = { Text("SubDL API key (optional)", fontSize = 12.sp) },
+                        placeholder = { Text("subdl.com/panel/api", fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("subdl_api_key_field"),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp)
+                    )
+                    Text(
+                        text = "Keys stay on this device and unlock higher subtitle quotas.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             },
             confirmButton = {
-                TextButton(onClick = { isPlaybackPreferencesOpen = false }) {
+                TextButton(onClick = {
+                    if (wyzieDraft.trim() != wyzieApiKey) onWyzieApiKeyChanged(wyzieDraft)
+                    if (subdlDraft.trim() != subdlApiKey) onSubdlApiKeyChanged(subdlDraft)
+                    isPlaybackPreferencesOpen = false
+                }) {
                     Text("Done")
                 }
             }
@@ -1064,6 +1208,7 @@ private fun WatchLaterSortMenu(
 private fun SavedVideoRow(
     video: VideoItem,
     progressFraction: Float,
+    progressLabel: String? = null,
     isSelected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -1130,7 +1275,7 @@ private fun SavedVideoRow(
                 isWatched = false,
                 shape = RoundedCornerShape(6.dp)
             ) {
-                if (progressFraction > 0f) {
+                if (progressFraction > 0.01f && progressFraction < 0.99f) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
@@ -1140,7 +1285,7 @@ private fun SavedVideoRow(
                     ) {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(progressFraction)
+                                .fillMaxWidth(progressFraction.coerceIn(0f, 1f))
                                 .height(3.dp)
                                 .background(YouTubeRed)
                         )
@@ -1161,16 +1306,24 @@ private fun SavedVideoRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = video.channelName,
+                    text = if (video.mediaType == MediaType.TV_SHOW) {
+                        "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)} • ${video.channelName}"
+                    } else {
+                        video.channelName
+                    },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${video.duration} • Saved locally",
+                    text = if (!progressLabel.isNullOrBlank()) {
+                        "$progressLabel • Saved"
+                    } else {
+                        "${video.duration} • Saved"
+                    },
                     fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (!progressLabel.isNullOrBlank()) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
@@ -1259,20 +1412,22 @@ private fun HistoryCard(
             isWatched = false,
             shape = HistoryCardShape
         ) {
-            // Progress bar
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .height(3.dp)
-                    .background(Color.Black.copy(alpha = 0.5f))
-            ) {
+            // Progress bar (hidden until real progress exists, like the feed).
+            if (entry.progressFraction > 0.01f) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(entry.progressFraction)
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
                         .height(3.dp)
-                        .background(YouTubeRed)
-                )
+                        .background(Color.Black.copy(alpha = 0.5f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(entry.progressFraction.coerceIn(0f, 1f))
+                            .height(3.dp)
+                            .background(YouTubeRed)
+                    )
+                }
             }
         }
 
@@ -1289,7 +1444,11 @@ private fun HistoryCard(
         )
 
         Text(
-            text = video.channelName,
+            text = if (video.mediaType == MediaType.TV_SHOW) {
+                "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)} • ${video.channelName}"
+            } else {
+                video.channelName
+            },
             fontSize = 11.5.sp,
             fontWeight = FontWeight.Normal,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1297,7 +1456,14 @@ private fun HistoryCard(
             overflow = TextOverflow.Ellipsis
         )
 
-        if (entry.durationSeconds > 0L) {
+        if (entry.completed) {
+            Text(
+                text = "Completed",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        } else if (entry.durationSeconds > 0L) {
             Text(
                 text = "${formatPlaybackTime(entry.remainingSeconds)} left",
                 fontSize = 10.sp,

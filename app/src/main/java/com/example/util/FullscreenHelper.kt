@@ -53,6 +53,15 @@ object FullscreenHelper {
     private var upNextOverlay: FullscreenUpNextOverlay? = null
     private var upNextAutoNextRunnable: Runnable? = null
 
+    // Skip-segment pill (TheIntroDB). Lives in the fullscreen container for
+    // the same reason as Up Next: the provider custom view mounts above
+    // Compose, so the Compose pill is invisible in native fullscreen.
+    private var skipTargetKey: String? = null
+    private var skipLabel: String = ""
+    private var skipAction: (() -> Unit)? = null
+    private var skipPositionSeconds = 0.0
+    private var skipOverlay: FullscreenSkipOverlay? = null
+
     val isCustomViewActive: Boolean
         get() = customView != null || fullscreenPlayerView != null
 
@@ -86,6 +95,7 @@ object FullscreenHelper {
                 )
             )
             refreshUpNextOverlay()
+            refreshSkipOverlay()
             return
         }
         if (customView != null) {
@@ -116,6 +126,7 @@ object FullscreenHelper {
         fullscreenContainer = container
         decorView.addView(container)
         refreshUpNextOverlay()
+        refreshSkipOverlay()
 
         // Hide system UI status bar and navigation bar for immersive full screen
         val window = activity.window
@@ -145,6 +156,7 @@ object FullscreenHelper {
             container.removeAllViews()
         }
         removeUpNextOverlay()
+        removeSkipOverlay()
         upNextInteractionVisible = false
         fullscreenContainer = null
         customView = null
@@ -240,6 +252,41 @@ object FullscreenHelper {
         }
     }
 
+    /** Registers the current skip-segment pill for the native fullscreen layer. */
+    fun setSkipTarget(
+        key: String?,
+        label: String?,
+        isNextEpisode: Boolean = false,
+        onSkip: (() -> Unit)?
+    ) {
+        mainHandler.post {
+            if (key.isNullOrBlank() || label.isNullOrBlank() || onSkip == null) {
+                clearSkipTargetInternal()
+                return@post
+            }
+            skipTargetKey = key
+            skipLabel = label.trim()
+            skipAction = onSkip
+            refreshSkipOverlay()
+        }
+    }
+
+    /** Clears a skip target only if it still belongs to the caller that set it. */
+    fun clearSkipTarget(key: String? = null) {
+        mainHandler.post {
+            if (key != null && key != skipTargetKey) return@post
+            clearSkipTargetInternal()
+        }
+    }
+
+    /** Feeds playback position into the fullscreen skip pill. */
+    fun updateSkipPlayback(positionSeconds: Double) {
+        mainHandler.post {
+            skipPositionSeconds = positionSeconds
+            refreshSkipOverlay()
+        }
+    }
+
     /** Uses the same controls visibility state as the regular player surface. */
     fun notifyPlayerInteraction() {
         PlayerViewManager.showPlayerUi()
@@ -268,6 +315,7 @@ object FullscreenHelper {
         customViewCallback = null
         upNextInteractionVisible = false
         removeUpNextOverlay()
+        removeSkipOverlay()
     }
 
     /** Temporarily hosts the persistent player in the fullscreen container during reload. */
@@ -287,6 +335,7 @@ object FullscreenHelper {
             )
         )
         refreshUpNextOverlay()
+        refreshSkipOverlay()
     }
 
     fun isPlayerViewHosted(view: View): Boolean = fullscreenPlayerView === view
@@ -305,6 +354,61 @@ object FullscreenHelper {
         upNextInteractionVisible = false
         cancelAutoNext()
         removeUpNextOverlay()
+    }
+
+    private fun clearSkipTargetInternal() {
+        skipTargetKey = null
+        skipLabel = ""
+        skipAction = null
+        removeSkipOverlay()
+    }
+
+    private fun refreshSkipOverlay() {
+        val container = fullscreenContainer
+        val targetKey = skipTargetKey
+        val action = skipAction
+        val hasFullscreenSurface = customView != null || fullscreenPlayerView != null
+        // Button-only UX: visible whenever a segment is active on a usable
+        // fullscreen surface. Shown while paused too, matching inline.
+        val shouldShow = container != null &&
+            hasFullscreenSurface &&
+            targetKey != null &&
+            action != null &&
+            skipLabel.isNotBlank() &&
+            skipPositionSeconds.isFinite() &&
+            skipPositionSeconds >= 0.0
+
+        if (!shouldShow) {
+            removeSkipOverlay()
+            return
+        }
+
+        val card = skipOverlay ?: FullscreenSkipOverlay(container.context) {
+            triggerSkip(targetKey)
+        }.also { created ->
+            skipOverlay = created
+            created.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.END
+            ).apply {
+                setMargins(0, 0, dp(container.context, 16), dp(container.context, 96))
+            }
+            container.addView(created)
+        }
+        card.render(skipLabel)
+    }
+
+    private fun triggerSkip(key: String?) {
+        if (key == null || key != skipTargetKey) return
+        skipAction?.invoke()
+    }
+
+    private fun removeSkipOverlay() {
+        skipOverlay?.let { overlay ->
+            (overlay.parent as? ViewGroup)?.removeView(overlay)
+        }
+        skipOverlay = null
     }
 
     private fun refreshUpNextOverlay() {
@@ -358,7 +462,7 @@ object FullscreenHelper {
                 dp(container.context, 40),
                 Gravity.CENTER_VERTICAL or Gravity.END
             ).apply {
-                setMargins(0, 0, dp(container.context, 10), 0)
+                setMargins(0, dp(container.context, 48), dp(container.context, 10), 0)
             }
             container.addView(created)
         }
@@ -426,6 +530,44 @@ object FullscreenHelper {
             }
             return super.dispatchTouchEvent(event)
         }
+    }
+
+    private class FullscreenSkipOverlay(
+        context: Context,
+        onClick: () -> Unit
+    ) : FrameLayout(context) {
+        private val button: android.widget.Button
+
+        init {
+            isClickable = false
+            isFocusable = false
+            button = android.widget.Button(context).apply {
+                setOnClickListener { onClick() }
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.argb(200, 20, 20, 20))
+                textSize = 14f
+                isAllCaps = false
+                val horizontal = dp(14)
+                val vertical = dp(10)
+                setPadding(horizontal, vertical, horizontal, vertical)
+            }
+            addView(
+                button,
+                LayoutParams(
+                    LayoutParams.WRAP_CONTENT,
+                    LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER
+                )
+            )
+            setOnClickListener { onClick() }
+        }
+
+        fun render(label: String) {
+            if (button.text.toString() != label) button.text = label
+        }
+
+        private fun dp(value: Int): Int =
+            (value * resources.displayMetrics.density).roundToInt()
     }
 
     private class FullscreenUpNextOverlay(

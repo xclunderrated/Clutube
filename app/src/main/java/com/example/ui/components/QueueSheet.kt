@@ -1,14 +1,16 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -22,8 +24,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.PauseCircle
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -40,22 +44,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.example.model.VideoItem
 import com.example.model.playbackKey
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
-import com.example.util.rememberOptimizedImageRequest
 import kotlin.math.abs
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun QueueSheet(
     queue: List<VideoItem>,
@@ -65,6 +69,7 @@ fun QueueSheet(
     onRemove: (String) -> Unit,
     onMove: (Int, Int) -> Unit,
     onClear: () -> Unit,
+    onBrowse: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     ModalBottomSheet(
@@ -119,12 +124,50 @@ fun QueueSheet(
             )
 
             if (queue.isEmpty()) {
-                Text(
-                    text = "Add videos from any card to build your queue.",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 12.dp)
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QueueMusic,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Your queue is empty",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Add videos from any card to build your queue.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                    )
+                    if (onBrowse != null) {
+                        Button(
+                            onClick = {
+                                onDismiss()
+                                onBrowse()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = YouTubeRed),
+                            modifier = Modifier.testTag("queue_browse_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Browse titles")
+                        }
+                    }
+                }
             } else {
                 LazyColumn(
                     modifier = Modifier
@@ -140,7 +183,8 @@ fun QueueSheet(
                             onMove = { delta ->
                                 val target = (index + delta).coerceIn(0, queue.lastIndex)
                                 if (target != index) onMove(index, target)
-                            }
+                            },
+                            modifier = Modifier.animateItemPlacement()
                         )
                     }
                 }
@@ -155,20 +199,19 @@ private fun QueueVideoRow(
     isPlaying: Boolean = false,
     onClick: () -> Unit,
     onRemove: (() -> Unit)? = null,
-    onMove: ((Int) -> Unit)? = null
+    onMove: ((Int) -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
-    val imageRequest = rememberOptimizedImageRequest(
-        data = video.thumbnailUrl,
-        preset = ImagePreset.COMPACT_THUMBNAIL
-    )
+    val haptics = LocalHapticFeedback.current
     var isDragging by remember(video.id) { mutableStateOf(false) }
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(
-                if (isPlaying) YouTubeRed.copy(alpha = 0.08f)
+                if (isDragging) YouTubeRed.copy(alpha = 0.14f)
+                else if (isPlaying) YouTubeRed.copy(alpha = 0.08f)
                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             )
             .then(
@@ -179,6 +222,9 @@ private fun QueueVideoRow(
                             onDragStart = {
                                 isDragging = true
                                 dragDistance = 0f
+                                try {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                } catch (_: Exception) { }
                             },
                             onDrag = { change, amount ->
                                 change.consume()
@@ -186,6 +232,9 @@ private fun QueueVideoRow(
                                 val rowHeight = 58f
                                 if (abs(dragDistance) >= rowHeight) {
                                     onMove(if (dragDistance > 0f) 1 else -1)
+                                    try {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    } catch (_: Exception) { }
                                     dragDistance -= if (dragDistance > 0f) rowHeight else -rowHeight
                                 }
                             },
@@ -195,7 +244,11 @@ private fun QueueVideoRow(
                     }
                 } else Modifier
             )
-            .clickable(onClick = onClick)
+            .clickable(
+                role = Role.Button,
+                onClickLabel = "Play ${video.title}",
+                onClick = onClick
+            )
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -211,7 +264,12 @@ private fun QueueVideoRow(
             shape = RoundedCornerShape(5.dp)
         ) {
             if (isPlaying) {
-                Icon(Icons.Default.PauseCircle, contentDescription = null, tint = YouTubeRed, modifier = Modifier.size(28.dp))
+                Icon(
+                    Icons.Default.PauseCircle,
+                    contentDescription = "Now playing: ${video.title}",
+                    tint = YouTubeRed,
+                    modifier = Modifier.size(28.dp)
+                )
             }
         }
 

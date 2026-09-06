@@ -33,6 +33,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,8 +57,11 @@ private val ShortGradient = Brush.verticalGradient(
 fun ShortsShelf(
     shorts: List<ShortItem>,
     onShortClick: (Int) -> Unit,
+    onMoreOptions: ((ShortItem) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    // Collapse the shelf when empty instead of rendering a header + empty row.
+    if (shorts.isEmpty()) return
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -79,7 +84,7 @@ fun ShortsShelf(
             ) {
                 Icon(
                     imageVector = Icons.Default.ElectricBolt,
-                    contentDescription = "Shorts Icon",
+                    contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(16.dp)
                 )
@@ -92,7 +97,8 @@ fun ShortsShelf(
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.3).sp,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.semantics { heading() }
             )
 
             Spacer(modifier = Modifier.width(8.dp))
@@ -128,7 +134,8 @@ fun ShortsShelf(
                 val onClick = remember(index, onShortClick) { { onShortClick(index) } }
                 ShortCard(
                     item = item,
-                    onClick = onClick
+                    onClick = onClick,
+                    onMoreOptions = onMoreOptions?.let { handler -> { handler(item) } }
                 )
             }
         }
@@ -138,11 +145,13 @@ fun ShortsShelf(
 @Composable
 fun ShortCard(
     item: ShortItem,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onMoreOptions: (() -> Unit)? = null
 ) {
     val imageRequest = rememberOptimizedImageRequest(
         data = item.thumbnailUrl,
-        preset = ImagePreset.SHORT_CARD
+        preset = ImagePreset.SHORT_CARD,
+        crossfade = true
     )
 
     Box(
@@ -151,7 +160,11 @@ fun ShortCard(
             .height(240.dp)
             .clip(ShortCardShape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
+            .clickable(
+                role = androidx.compose.ui.semantics.Role.Button,
+                onClickLabel = "Play short ${item.title}",
+                onClick = onClick
+            )
             .testTag("short_card_${item.id}")
     ) {
         AsyncImage(
@@ -168,18 +181,21 @@ fun ShortCard(
                 .background(ShortGradient)
         )
 
-        // 3-dot overlay menu
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(4.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(20.dp)
-            )
+        // 3-dot overlay menu — only rendered when actionable (fixes dead affordance).
+        if (onMoreOptions != null) {
+            androidx.compose.material3.IconButton(
+                onClick = onMoreOptions,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "Options for ${item.title}",
+                    tint = Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
 
         // Title only: a real Shorts view count is not available locally.

@@ -57,7 +57,24 @@ data class DownloadEntity(
     val etaSeconds: Long = 0L,
     val createdAtMillis: Long = System.currentTimeMillis(),
     val completedAtMillis: Long? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    // --- Offline subtitle (CC) sidecar support (DB v6) ---
+    // Requested subtitle language as ISO 639-1 ("en", "es", ...) or "off".
+    val subtitleLanguage: String? = "en",
+    // Absolute path of the primary downloaded sidecar (.srt/.vtt), if any.
+    val subtitleFilePath: String? = null,
+    // JSON manifest of all known sidecar files for this download.
+    // Kept as raw JSON (not a Room type-converter) so V1 stays dependency-free.
+    val subtitleFilesJson: String? = null,
+    // Id of the user-selected subtitle track (sidecar path or embedded label).
+    val selectedSubtitleTrackId: String? = null,
+    // Manual A/V sync correction in milliseconds. Positive = show cues later.
+    // Applied by shifting sidecar cue timestamps (ExoPlayer has no delay API).
+    val subtitleOffsetMs: Long = 0L,
+    // Release name of the chosen subtitle (e.g. "BluRay x264 YTS") for diagnostics.
+    val subtitleReleaseName: String? = null,
+    // True when the video container itself carries subtitle tracks (mkv/mp4).
+    val hasEmbeddedSubtitles: Boolean = false
 )
 
 @Dao
@@ -131,6 +148,12 @@ interface DownloadDao {
     @Query("UPDATE downloads SET status = 'QUEUED', errorMessage = null WHERE status IN ('PAUSED', 'FAILED')")
     suspend fun resumeAll()
 
+    @Query("UPDATE downloads SET status = 'QUEUED', errorMessage = null WHERE status = 'FAILED'")
+    suspend fun retryAllFailed()
+
+    @Query("DELETE FROM downloads WHERE status = 'FAILED'")
+    suspend fun clearFailed()
+
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun deleteById(id: String)
 
@@ -139,4 +162,30 @@ interface DownloadDao {
 
     @Query("DELETE FROM downloads")
     suspend fun clearAll()
+
+    // --- Offline subtitle (CC) sidecar support (DB v6) ---
+
+    @Query("UPDATE downloads SET subtitleLanguage = :language WHERE id = :id")
+    suspend fun updateSubtitleLanguage(id: String, language: String?)
+
+    @Query("UPDATE downloads SET subtitleFilePath = :path, subtitleFilesJson = :filesJson, subtitleReleaseName = :releaseName, hasEmbeddedSubtitles = :hasEmbedded WHERE id = :id")
+    suspend fun updateSubtitleFiles(
+        id: String,
+        path: String?,
+        filesJson: String?,
+        releaseName: String?,
+        hasEmbedded: Boolean
+    )
+
+    @Query("UPDATE downloads SET subtitleOffsetMs = :offsetMs WHERE id = :id")
+    suspend fun updateSubtitleOffset(id: String, offsetMs: Long)
+
+    @Query("UPDATE downloads SET selectedSubtitleTrackId = :trackId WHERE id = :id")
+    suspend fun updateSelectedSubtitleTrack(id: String, trackId: String?)
+
+    @Query("UPDATE downloads SET hasEmbeddedSubtitles = :hasEmbedded WHERE id = :id")
+    suspend fun updateEmbeddedSubtitleFlag(id: String, hasEmbedded: Boolean)
+
+    @Query("SELECT * FROM downloads WHERE status = 'COMPLETED' AND (subtitleFilePath IS NULL OR subtitleFilePath = '') AND (subtitleLanguage IS NOT NULL AND subtitleLanguage != 'off')")
+    suspend fun getCompletedWithoutSubtitles(): List<DownloadEntity>
 }

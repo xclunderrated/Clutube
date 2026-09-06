@@ -63,7 +63,7 @@ class TvShowEpisodeListTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("episodes_toggle").performClick()
+        // Episodes are expanded by default; no toggle click needed.
         composeTestRule.onNodeWithTag("episode_item_1_2")
             .assertIsDisplayed()
             .assertTextContains("UPCOMING")

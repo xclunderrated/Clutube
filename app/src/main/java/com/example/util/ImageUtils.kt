@@ -94,10 +94,19 @@ private fun optimizeImageUrl(data: Any?, width: Int, height: Int): Any? {
         }
 
         // YouTube can keep the same channel CDN URL while replacing the
-        // underlying avatar/banner. Tie those URLs to the app release so a
-        // fresh release always asks for the current artwork.
+        // underlying avatar/banner. Tie those URLs to a stable version so a
+        // fresh release does not invalidate the whole avatar disk cache.
         "yt3.googleusercontent.com/" in url || "yt3.ggpht.com/" in url -> {
             url.withArtworkCacheVersion()
+        }
+
+        // Thumbnail CDN has fixed variants; prefer a smaller variant for
+        // compact targets to save bandwidth (Coil size() still bounds decode).
+        ("i.ytimg.com/" in url || "i9.ytimg.com/" in url) && width <= 480 -> {
+            url
+                .replace("maxresdefault", "hqdefault")
+                .replace("hqdefault", "mqdefault")
+                .replace("sddefault", "mqdefault")
         }
 
         else -> data
@@ -124,8 +133,10 @@ private fun String.replaceQueryParameter(name: String, value: Int): String {
 }
 
 private fun String.withArtworkCacheVersion(): String {
+    // Stable version avoids invalidating every avatar/banner on each release.
+    // Bump manually only when artwork handling changes.
     val separator = if ('?' in this) '&' else '?'
-    return "$this${separator}clutube_artwork_v=${BuildConfig.VERSION_CODE}"
+    return "$this${separator}clutube_artwork_v=1"
 }
 
 @Composable
@@ -149,23 +160,27 @@ fun rememberThumbnailRequestWithFallback(
     primaryUrl: String?,
     fallbackUrl: String?,
     preset: ImagePreset = ImagePreset.THUMBNAIL,
-    crossfade: Boolean = false,
+    crossfade: Boolean = true,
     onFallbackTriggered: (() -> Unit)? = null
 ): Pair<ImageRequest, () -> Unit> {
     val context = LocalContext.current
     var useFallback by remember(primaryUrl, fallbackUrl) {
         mutableStateOf(false)
     }
-    val effectiveUrl = if (useFallback && !fallbackUrl.isNullOrBlank() && fallbackUrl != primaryUrl) {
-        fallbackUrl
-    } else {
-        primaryUrl
+    val cleanPrimary = primaryUrl?.takeIf { it.isNotBlank() }
+    val cleanFallback = fallbackUrl?.takeIf { it.isNotBlank() }?.takeIf { it != cleanPrimary }
+    // If primary is null/blank but fallback is valid, start on fallback immediately
+    // instead of emitting a null-data request for one frame.
+    val effectiveUrl = when {
+        cleanPrimary.isNullOrBlank() && !cleanFallback.isNullOrBlank() -> cleanFallback
+        useFallback && !cleanFallback.isNullOrBlank() -> cleanFallback
+        else -> cleanPrimary
     }
     val request = remember(context, effectiveUrl, preset, crossfade) {
         buildOptimizedImageRequest(context, effectiveUrl, preset, crossfade)
     }
     val onError: () -> Unit = {
-        if (!useFallback && !fallbackUrl.isNullOrBlank() && fallbackUrl != primaryUrl) {
+        if (!useFallback && !cleanFallback.isNullOrBlank()) {
             useFallback = true
             onFallbackTriggered?.invoke()
         }

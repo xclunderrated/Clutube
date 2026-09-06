@@ -32,22 +32,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 
 /**
  * YouTube-style animated shimmer effect modifier.
  * Uses drawBehind for zero-recomposition hardware-accelerated sweeping animation.
+ * Colors derive from MaterialTheme so light/dark stay in sync with Color.kt.
  */
 @Composable
 fun rememberShimmerBrush(): Brush {
-    val isDark = MaterialTheme.colorScheme.surface.let {
-        (it.red * 0.299 + it.green * 0.587 + it.blue * 0.114) < 0.5
-    }
-
-    val baseColor = if (isDark) Color(0xFF242424) else Color(0xFFE2E2E2)
-    val highlightColor = if (isDark) Color(0xFF333333) else Color(0xFFEEEEEE)
+    val scheme = MaterialTheme.colorScheme
+    val baseColor = scheme.surfaceVariant.copy(alpha = 0.9f)
+    val highlightColor = scheme.surfaceVariant.copy(alpha = 0.45f)
 
     return remember(baseColor, highlightColor) {
         Brush.linearGradient(
@@ -64,11 +62,10 @@ fun rememberShimmerBrush(): Brush {
  */
 @Composable
 fun Modifier.shimmerPlaceholder(): Modifier {
-    val isDark = MaterialTheme.colorScheme.surface.let {
-        (it.red * 0.299 + it.green * 0.587 + it.blue * 0.114) < 0.5
-    }
-    val baseColor = if (isDark) Color(0xFF242424) else Color(0xFFE2E2E2)
-    val highlightColor = if (isDark) Color(0xFF333333) else Color(0xFFEEEEEE)
+    val scheme = MaterialTheme.colorScheme
+    // Derive from theme instead of hard-coded greys to avoid drift.
+    val baseColor = scheme.surfaceVariant.copy(alpha = 0.85f)
+    val highlightColor = scheme.onSurfaceVariant.copy(alpha = 0.18f)
     val shimmerColors = remember(baseColor, highlightColor) {
         listOf(baseColor, highlightColor, baseColor)
     }
@@ -114,6 +111,7 @@ fun VideoCardSkeleton(
             .fillMaxWidth()
             .padding(bottom = 16.dp)
             .testTag("video_card_skeleton")
+            .clearAndSetSemantics { }
     ) {
         // Thumbnail Shimmer
         Box(
@@ -185,6 +183,7 @@ fun PremiereHeroCardSkeleton(
             .clip(RoundedCornerShape(12.dp))
             .shimmerPlaceholder()
             .testTag("premiere_hero_skeleton")
+            .clearAndSetSemantics { }
     )
 }
 
@@ -199,6 +198,7 @@ fun ShortsShelfSkeleton(
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 12.dp)
+            .clearAndSetSemantics { }
     ) {
         // Shelf Title Skeleton
         Box(
@@ -257,7 +257,8 @@ fun EpisodeItemCardSkeleton(
             .padding(vertical = 4.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-            .padding(8.dp),
+            .padding(8.dp)
+            .clearAndSetSemantics { },
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Thumbnail skeleton
@@ -316,7 +317,8 @@ fun CompactRelatedVideoCardSkeleton(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+            .clearAndSetSemantics { },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(

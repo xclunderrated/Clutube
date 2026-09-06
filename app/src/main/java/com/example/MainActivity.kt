@@ -65,6 +65,9 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.example.model.DeviceLayoutMode
 import com.example.model.MediaType
 import com.example.model.VideoItem
+import com.example.model.playbackKey
+import com.example.model.titleGroupKey
+import com.example.model.toContinueUiModel
 import com.example.ui.components.BottomNavBar
 import com.example.ui.components.CommentsBottomSheet
 import com.example.ui.components.CreateSheet
@@ -113,6 +116,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Listens for notification-bar actions on download notifications.
+    private val downloadServiceReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                com.example.data.download.DownloadService.ACTION_PAUSE_ALL -> {
+                    viewModel.pauseAllDownloads()
+                }
+                com.example.data.download.DownloadService.ACTION_RETRY_DOWNLOAD -> {
+                    val id = intent.getStringExtra(
+                        com.example.data.download.DownloadService.EXTRA_DOWNLOAD_ID
+                    )
+                    if (!id.isNullOrBlank()) viewModel.retryDownload(id)
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -128,6 +148,29 @@ class MainActivity : ComponentActivity() {
             filter,
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+
+        // Register the download notification action receiver
+        // ("Pause all" on the progress notification, "Retry" on failures).
+        ContextCompat.registerReceiver(
+            this,
+            downloadServiceReceiver,
+            IntentFilter().apply {
+                addAction(com.example.data.download.DownloadService.ACTION_PAUSE_ALL)
+                addAction(com.example.data.download.DownloadService.ACTION_RETRY_DOWNLOAD)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+
+        // Request notification permission on Android 13+ so the foreground download
+        // notification is actually visible to the user.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST_CODE)
+            }
+        }
+
         viewModel.initSettings(applicationContext)
         com.example.data.torrent.TorrentEngine.initialize(applicationContext)
         setupMediaSession()
@@ -172,6 +215,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleDeepLink(intent: Intent?) {
+        // Taps on download notifications land here and open Downloads.
+        if (intent?.getBooleanExtra(
+                com.example.data.download.DownloadService.EXTRA_OPEN_DOWNLOADS, false
+            ) == true
+        ) {
+            viewModel.openDownloadsScreen()
+            return
+        }
         val data = intent?.data ?: return
         if (data.scheme.equals("magnet", ignoreCase = true) || data.toString().startsWith("magnet:?")) {
             viewModel.openDownloadsScreen()
@@ -431,7 +482,10 @@ fun YouTubeApp(
                 selectedServerId = uiState.selectedServerId,
                 onSelectServer = { viewModel.setStreamServer(it) },
                 isTouchEnabled = false,
-                resumePositionSeconds = uiState.currentHistoryEntry?.positionSeconds?.toDouble() ?: 0.0,
+                resumePositionSeconds = uiState.pendingResumeOverrideKey
+                    ?.takeIf { it == uiState.currentPlayingVideo!!.playbackKey() }
+                    ?.let { uiState.pendingResumeOverrideSeconds }
+                    ?: uiState.currentHistoryEntry?.positionSeconds?.toDouble() ?: 0.0,
                 playWhenReady = uiState.isPlaying,
                 modifier = Modifier.fillMaxSize()
             )
@@ -439,16 +493,7 @@ fun YouTubeApp(
         return
     }
 
-    BackHandler(
-        enabled = isFullscreen ||
-            uiState.showHistoryScreen ||
-            uiState.showCommentsSheet ||
-            uiState.isChannelScreenOpen ||
-            uiState.isPlayerExpanded ||
-            uiState.isSearching ||
-            uiState.isQueuePanelOpen ||
-            uiState.selectedTab == 1
-    ) {
+    BackHandler {
         when {
             isFullscreen -> activity?.let { com.example.util.FullscreenHelper.exitFullscreen(it) }
             uiState.showHistoryScreen -> viewModel.setShowHistoryScreen(false)
@@ -458,6 +503,9 @@ fun YouTubeApp(
             uiState.isSearching -> viewModel.exitSearch()
             uiState.isQueuePanelOpen -> viewModel.setQueuePanelOpen(false)
             uiState.selectedTab == 1 -> viewModel.selectTab(0)
+            uiState.selectedTab != 0 -> viewModel.selectTab(0)
+            uiState.isPlayerExpanded -> viewModel.minimizePlayer()
+            uiState.currentPlayingVideo != null -> viewModel.minimizePlayer()
         }
     }
 
@@ -472,6 +520,55 @@ fun YouTubeApp(
             DeviceLayoutMode.AUTO -> maxWidth >= 600.dp
         }
         val snackbarHostState = remember { SnackbarHostState() }
+
+        // Continue-watching progress + labels shared by every card surface.
+        // Exact playback keys first; series-group fallbacks never overwrite
+        // them, so an S1:E1 catalog card reflects the S3:E7 resume point
+        // without letting the oldest episode win (no bare video-id keys).
+        val progressFractions = remember(uiState.watchHistory) {
+            buildMap {
+                val live = uiState.watchHistory.filterNot { it.completed }
+                live.forEach { entry ->
+                    if (entry.progressFraction > com.example.model.MIN_VISIBLE_PROGRESS_FRACTION) {
+                        put(entry.key, entry.progressFraction)
+                    }
+                }
+                live.asSequence()
+                    .filter { it.video.mediaType == MediaType.TV_SHOW }
+                    .groupBy { it.titleGroupKey() }
+                    .forEach { (group, grouped) ->
+                        val latest = grouped.maxWithOrNull(
+                            compareBy<com.example.model.WatchHistoryEntry> { it.lastWatchedAtMillis }
+                                .thenBy { it.positionSeconds }
+                        ) ?: return@forEach
+                        if (latest.progressFraction > com.example.model.MIN_VISIBLE_PROGRESS_FRACTION) {
+                            putIfAbsent(group, latest.progressFraction)
+                        }
+                    }
+            }
+        }
+        val continueLabels = remember(uiState.watchHistory) {
+            buildMap {
+                val live = uiState.watchHistory.filterNot { it.completed }
+                live.forEach { entry ->
+                    if (entry.durationSeconds > 0L) {
+                        put(entry.key, entry.toContinueUiModel().label)
+                    }
+                }
+                live.asSequence()
+                    .filter { it.video.mediaType == MediaType.TV_SHOW }
+                    .groupBy { it.titleGroupKey() }
+                    .forEach { (group, grouped) ->
+                        val latest = grouped.maxWithOrNull(
+                            compareBy<com.example.model.WatchHistoryEntry> { it.lastWatchedAtMillis }
+                                .thenBy { it.positionSeconds }
+                        ) ?: return@forEach
+                        if (latest.durationSeconds > 0L) {
+                            putIfAbsent(group, latest.toContinueUiModel().label)
+                        }
+                    }
+            }
+        }
 
         LaunchedEffect(uiState.userFeedbackMessage) {
             val msg = uiState.userFeedbackMessage ?: return@LaunchedEffect
@@ -533,12 +630,13 @@ fun YouTubeApp(
                         when (uiState.selectedTab) {
                             0 -> HomeScreen(
                                 videos = uiState.videos,
-                                shorts = uiState.shorts,
                                 continueWatching = uiState.continueWatching,
                                 recentWatched = uiState.recentWatched,
                                 showContinueWatching = uiState.showContinueWatchingOnHome,
                                 selectedCategory = uiState.selectedCategory,
                                 isLoading = uiState.isLoading,
+                                isRefreshing = uiState.isFeedRefreshing,
+                                scrollToTopNonce = uiState.homeScrollToTopNonce,
                                 isLoadingMore = uiState.isLoadingMore,
                                 feedErrorMessage = uiState.feedErrorMessage,
                                 isOffline = uiState.isOffline,
@@ -549,15 +647,12 @@ fun YouTubeApp(
                                 onRefresh = { viewModel.reloadCurrentCategory() },
                                 onVideoClick = { viewModel.playVideo(it, expand = true) },
                                 onContinueWatchingClick = { viewModel.resumeWatch(it, expand = true) },
-                                onShortClick = {
-                                    viewModel.selectShort(it)
-                                    viewModel.selectTab(1)
-                                },
+                                onRemoveContinueWatching = { viewModel.removeWatchHistoryEntry(it.key) },
                                  onSaveToWatchLater = { viewModel.toggleSave(it.id) },
                                  onShare = { shareVideo(context, it) },
                                  onAddToQueue = { viewModel.addToQueue(it) },
                                  watchedVideoIds = uiState.watchedVideoIds,
-                                 onToggleWatched = { viewModel.toggleWatched(it.id) },
+                                 onToggleWatched = { viewModel.toggleWatched(it) },
                                  notInterestedVideoIds = uiState.notInterestedVideoIds,
                                  notRecommendedChannelNames = uiState.notRecommendedChannelNames,
                                  onNotInterested = { viewModel.markNotInterested(it.id) },
@@ -568,13 +663,16 @@ fun YouTubeApp(
                                      .map { it.id }
                                      .toSet(),
                                  onToggleReleaseAlert = {
-                                     if (!viewModel.isReleaseAlertActive(it)) {
-                                         requestNotificationPermission()
-                                     }
-                                     viewModel.toggleReleaseAlert(it)
-                                 },
-                                 onOpenServerDialog = { viewModel.setShowServerDialog(true) }
-                            )
+                                      if (!viewModel.isReleaseAlertActive(it)) {
+                                          requestNotificationPermission()
+                                      }
+                                      viewModel.toggleReleaseAlert(it)
+                                  },
+                                  onOpenServerDialog = { viewModel.setShowServerDialog(true) },
+                                  savedVideoIds = uiState.savedVideoIds,
+                                  progressFractions = progressFractions,
+                                  continueLabels = continueLabels
+                             )
 
                             1 -> ShortsScreen(
                                 shorts = uiState.shorts,
@@ -596,21 +694,24 @@ fun YouTubeApp(
                                  onShare = { shareVideo(context, it) },
                                  onAddToQueue = { viewModel.addToQueue(it) },
                                  watchedVideoIds = uiState.watchedVideoIds,
-                                 onToggleWatched = { viewModel.toggleWatched(it.id) },
+                                 onToggleWatched = { viewModel.toggleWatched(it) },
                                  onNotInterested = { viewModel.markNotInterested(it.id) },
                                  onNotRecommendChannel = { viewModel.blockRecommendedChannel(it.channelName) },
                                  onDownloadVideo = { viewModel.downloadVideoFromMenu(it) },
-                                 releaseAlertIds = uiState.releaseAlerts
-                                     .filterNot { it.isDelivered }
-                                     .map { it.id }
-                                     .toSet(),
-                                 onToggleReleaseAlert = {
-                                     if (!viewModel.isReleaseAlertActive(it)) {
-                                         requestNotificationPermission()
-                                     }
-                                     viewModel.toggleReleaseAlert(it)
-                                 }
-                            )
+                                  releaseAlertIds = uiState.releaseAlerts
+                                      .filterNot { it.isDelivered }
+                                      .map { it.id }
+                                      .toSet(),
+                                  onToggleReleaseAlert = {
+                                      if (!viewModel.isReleaseAlertActive(it)) {
+                                          requestNotificationPermission()
+                                      }
+                                      viewModel.toggleReleaseAlert(it)
+                                  },
+                                  savedVideoIds = uiState.savedVideoIds,
+                                  progressFractions = progressFractions,
+                                  continueLabels = continueLabels
+                             )
 
                             3 -> NotificationsScreen(
                                 notifications = uiState.notifications,
@@ -668,7 +769,18 @@ fun YouTubeApp(
                                 onOpenServerDialog = { viewModel.setShowServerDialog(true) },
                                 downloadsCount = uiState.downloads.count { it.status == com.example.data.local.DownloadStatus.COMPLETED.name },
                                 downloads = uiState.downloads,
-                                onOpenDownloads = { viewModel.openDownloadsScreen() }
+                                onOpenDownloads = { viewModel.openDownloadsScreen() },
+                                onDownloadSubtitles = { viewModel.fetchSubtitlesForDownload(it) },
+                                onSubtitleOffsetChanged = { id, offsetMs -> viewModel.updateSubtitleOffset(id, offsetMs) },
+                                onSubtitleTrackChanged = { id, trackId -> viewModel.setSubtitleTrack(id, trackId) },
+                                offlineSubtitleLanguage = uiState.offlineSubtitleLanguage,
+                                isSubtitleAutoDownload = uiState.isSubtitleAutoDownload,
+                                wyzieApiKey = uiState.wyzieApiKey,
+                                subdlApiKey = uiState.subdlApiKey,
+                                onOfflineSubtitleLanguageSelected = { viewModel.setOfflineSubtitleLanguage(it) },
+                                onSubtitleAutoDownloadChanged = { viewModel.setSubtitleAutoDownload(it) },
+                                onWyzieApiKeyChanged = { viewModel.setWyzieApiKey(it) },
+                                onSubdlApiKeyChanged = { viewModel.setSubdlApiKey(it) }
                             )
                         }
                     }
@@ -693,7 +805,7 @@ fun YouTubeApp(
                  onShare = { shareVideo(context, it) },
                  onAddToQueue = { viewModel.addToQueue(it) },
                  watchedVideoIds = uiState.watchedVideoIds,
-                 onToggleWatched = { viewModel.toggleWatched(it.id) },
+                 onToggleWatched = { viewModel.toggleWatched(it) },
                  onNotInterested = { viewModel.markNotInterested(it.id) },
                  onNotRecommendChannel = { viewModel.blockRecommendedChannel(it.channelName) },
                  releaseAlertIds = uiState.releaseAlerts
@@ -707,8 +819,12 @@ fun YouTubeApp(
                      viewModel.toggleReleaseAlert(it)
                  },
                  onRemoveSearchHistory = { viewModel.removeSearchHistory(it) },
-                 onClearSearchHistory = { viewModel.clearSearchHistory() },
-                 onDownloadVideo = { viewModel.downloadVideoFromMenu(it) }
+                  onClearSearchHistory = { viewModel.clearSearchHistory() },
+                  onDownloadVideo = { viewModel.downloadVideoFromMenu(it) },
+                  savedVideoIds = uiState.savedVideoIds,
+                  progressFractions = progressFractions,
+                  continueLabels = continueLabels,
+                  onVoiceSearch = { viewModel.submitSearch(uiState.searchQuery) }
             )
         }
 
@@ -743,7 +859,13 @@ fun YouTubeApp(
                     viewModel.closeDownloadsScreen()
                     viewModel.selectTab(0)
                 },
-                onAddMagnet = { viewModel.setShowAddMagnetDialog(true) }
+                onAddMagnet = { viewModel.setShowAddMagnetDialog(true) },
+                onDownloadSubtitles = { viewModel.fetchSubtitlesForDownload(it) },
+                onSubtitleOffsetChanged = { id, offsetMs -> viewModel.updateSubtitleOffset(id, offsetMs) },
+                onRetryAllFailed = { viewModel.retryAllFailedDownloads() },
+                onClearFailed = { viewModel.clearFailedDownloads() },
+                onDownloadAllSubtitles = { viewModel.downloadAllMissingSubtitles() },
+                onSubtitleTrackChanged = { id, trackId -> viewModel.setSubtitleTrack(id, trackId) }
             )
         }
 
@@ -764,7 +886,10 @@ fun YouTubeApp(
                     totalSeasons = uiState.totalSeasons,
                     selectedSeason = uiState.selectedSeason,
                      selectedServerId = uiState.selectedServerId,
-                     resumePositionSeconds = uiState.currentHistoryEntry?.positionSeconds?.toDouble() ?: 0.0,
+                     resumePositionSeconds = uiState.pendingResumeOverrideKey
+                        ?.takeIf { it == video.playbackKey() }
+                        ?.let { uiState.pendingResumeOverrideSeconds }
+                        ?: uiState.currentHistoryEntry?.positionSeconds?.toDouble() ?: 0.0,
                      currentPlaybackSnapshot = uiState.currentPlaybackSnapshot,
                      isPlaying = uiState.isPlaying,
                     isLiked = isLiked,
@@ -776,6 +901,9 @@ fun YouTubeApp(
                     isAutoNextEnabled = uiState.isAutoNextEpisodeEnabled,
                     onPlayNextEpisode = { viewModel.playNextEpisode() },
                     onToggleAutoNext = { viewModel.toggleAutoNextEpisode() },
+                    activeSkipSegment = uiState.activeSkipSegment,
+                    isSkipSegmentsEnabled = uiState.isSkipSegmentsEnabled,
+                    onSkipSegment = { viewModel.onSkipSegment(it) },
                     onRetryPlayback = { viewModel.retryCurrentPlayback() },
                     onMinimize = { viewModel.minimizePlayer() },
                     onSelectServer = { viewModel.setStreamServer(it) },
@@ -794,7 +922,7 @@ fun YouTubeApp(
                      onShare = { shareVideo(context, it) },
                      onAddToQueue = { viewModel.addToQueue(it) },
                      watchedVideoIds = uiState.watchedVideoIds,
-                     onToggleWatched = { viewModel.toggleWatched(it.id) },
+                     onToggleWatched = { viewModel.toggleWatched(it) },
                      onNotInterested = { viewModel.markNotInterested(it.id) },
                      onNotRecommendChannel = { viewModel.blockRecommendedChannel(it.channelName) },
                      isReleaseAlertActive = viewModel.isReleaseAlertActive(video),
@@ -822,10 +950,49 @@ fun YouTubeApp(
                      onDownloadEpisode = { vid, ep -> viewModel.downloadEpisode(vid, ep) },
                      onDownloadSeason = { vid, s, eps -> viewModel.downloadSeason(vid, s, eps) },
                      onDownloadVideo = { viewModel.downloadVideoFromMenu(it) },
-                     isMovieDownloaded = uiState.downloads.any { it.mediaType == MediaType.MOVIE.name && it.id == video.id && it.status == com.example.data.local.DownloadStatus.COMPLETED.name },
-                     movieDownloadProgress = uiState.downloads.firstOrNull { it.mediaType == MediaType.MOVIE.name && it.id == video.id && it.status == com.example.data.local.DownloadStatus.DOWNLOADING.name }?.progressPercent,
-                     isEpisodeDownloaded = { s, e -> uiState.downloads.any { it.mediaType == MediaType.TV_SHOW.name && it.id == "${video.id}_s${s}_e${e}" && it.status == com.example.data.local.DownloadStatus.COMPLETED.name } },
-                     getEpisodeDownloadProgress = { s, e -> uiState.downloads.firstOrNull { it.mediaType == MediaType.TV_SHOW.name && it.id == "${video.id}_s${s}_e${e}" && it.status == com.example.data.local.DownloadStatus.DOWNLOADING.name }?.progressPercent }
+                     // Episode identity is the (tmdbId, season, episode)
+                     // triple — never a raw row id. This matches plain
+                     // episode rows, torrent rows (deterministic or legacy
+                     // hash-suffixed), and both tmdbId/id spellings, so the
+                     // badge and progress can never stick to the wrong S/E.
+                     isMovieDownloaded = remember(video.tmdbId, video.id, uiState.downloads) {
+                         val canonical = video.tmdbId ?: video.id
+                         uiState.downloads.any {
+                             it.mediaType == MediaType.MOVIE.name &&
+                                 (it.tmdbId == canonical || it.tmdbId == video.id) &&
+                                 it.status == com.example.data.local.DownloadStatus.COMPLETED.name
+                         }
+                     },
+                     movieDownloadProgress = remember(video.tmdbId, video.id, uiState.downloads) {
+                         val canonical = video.tmdbId ?: video.id
+                         uiState.downloads.firstOrNull {
+                             it.mediaType == MediaType.MOVIE.name &&
+                                 (it.tmdbId == canonical || it.tmdbId == video.id) &&
+                                 (it.status == com.example.data.local.DownloadStatus.DOWNLOADING.name ||
+                                     it.status == com.example.data.local.DownloadStatus.QUEUED.name ||
+                                     it.status == com.example.data.local.DownloadStatus.PAUSED.name)
+                         }?.progressPercent
+                     },
+                     isEpisodeDownloaded = { s, e ->
+                         val canonical = video.tmdbId ?: video.id
+                         uiState.downloads.any {
+                             it.mediaType == MediaType.TV_SHOW.name &&
+                                 (it.tmdbId == canonical || it.tmdbId == video.id) &&
+                                 it.seasonNumber == s && it.episodeNumber == e &&
+                                 it.status == com.example.data.local.DownloadStatus.COMPLETED.name
+                         }
+                     },
+                     getEpisodeDownloadProgress = { s, e ->
+                         val canonical = video.tmdbId ?: video.id
+                         uiState.downloads.firstOrNull {
+                             it.mediaType == MediaType.TV_SHOW.name &&
+                                 (it.tmdbId == canonical || it.tmdbId == video.id) &&
+                                 it.seasonNumber == s && it.episodeNumber == e &&
+                                 (it.status == com.example.data.local.DownloadStatus.DOWNLOADING.name ||
+                                     it.status == com.example.data.local.DownloadStatus.QUEUED.name ||
+                                     it.status == com.example.data.local.DownloadStatus.PAUSED.name)
+                         }?.progressPercent
+                     }
                  )
             }
         }
@@ -859,7 +1026,7 @@ fun YouTubeApp(
                  onShareVideo = { shareVideo(context, it) },
                  onAddToQueue = { viewModel.addToQueue(it) },
                  watchedVideoIds = uiState.watchedVideoIds,
-                 onToggleWatched = { viewModel.toggleWatched(it.id) },
+                 onToggleWatched = { viewModel.toggleWatched(it) },
                  onNotInterested = { viewModel.markNotInterested(it.id) },
                  onNotRecommendChannel = { viewModel.blockRecommendedChannel(it.channelName) },
                  releaseAlertIds = uiState.releaseAlerts
@@ -903,7 +1070,10 @@ fun YouTubeApp(
                     onTogglePlayPause = { viewModel.togglePlayPause() },
                     isMuted = uiState.isMuted,
                     onToggleMute = { viewModel.toggleMute() },
-                    resumePositionSeconds = uiState.currentHistoryEntry?.positionSeconds?.toDouble() ?: 0.0,
+                    resumePositionSeconds = uiState.pendingResumeOverrideKey
+                        ?.takeIf { it == uiState.currentPlayingVideo!!.playbackKey() }
+                        ?.let { uiState.pendingResumeOverrideSeconds }
+                        ?: uiState.currentHistoryEntry?.positionSeconds?.toDouble() ?: 0.0,
                     progressFraction = uiState.currentHistoryEntry?.progressFraction ?: 0f
                 )
             }
@@ -965,7 +1135,26 @@ fun YouTubeApp(
                         quality = quality,
                         subtitleCc = subtitleCc
                     )
-                }
+                },
+                isAutoPickBest = uiState.isAutoPickBestTorrent,
+                onAutoPickChanged = { viewModel.setAutoPickBestTorrent(it) },
+                onAutoDownload = { quality ->
+                    viewModel.startAutoBestDownload(
+                        target = target,
+                        quality = quality
+                    )
+                },
+                torrentIndexers = remember(uiState.torrentIndexerOrder) {
+                    val order = uiState.torrentIndexerOrder
+                    val all = com.example.data.torrent.TorrentSourceRegistry.VERIFIED_INDEXERS
+                    if (order.isEmpty()) all
+                    else order.mapNotNull { id -> all.firstOrNull { it.id == id } } + all.filter { a -> order.none { it == a.id } }
+                },
+                disabledTorrentIndexers = uiState.disabledTorrentIndexers,
+                onToggleTorrentIndexer = { id, on -> viewModel.setTorrentIndexerEnabled(id, on) },
+                initialSubtitleLanguage = uiState.offlineSubtitleLanguage,
+                isSubtitleAutoDownload = uiState.isSubtitleAutoDownload,
+                onSubtitleAutoDownloadChanged = { viewModel.setSubtitleAutoDownload(it) }
             )
         }
 

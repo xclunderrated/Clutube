@@ -13,7 +13,11 @@ data class TorrentSource(
     val leechers: Int = 0,
     val provider: String = "YTS", // YTS, PirateBay, EZTV, Custom
     val season: Int? = null,
-    val episode: Int? = null
+    val episode: Int? = null,
+    /** Registry id of the indexer that produced this result (see TorrentSourceRegistry). */
+    val indexerId: String = "",
+    /** True when the result comes from a registry-verified indexer. */
+    val isVerified: Boolean = false
 ) {
     val healthScore: Int
         get() = when {

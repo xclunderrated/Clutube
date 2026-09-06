@@ -790,6 +790,9 @@ object PlayerViewManager {
      * surface so the app's own mini-player controls remain the only chrome.
      */
     fun setMiniPlayerMode(enabled: Boolean) {
+        // Called from Compose on every player recomposition; the CSS
+        // injection below stalls the provider page, so skip no-ops.
+        if (miniPlayerMode == enabled) return
         miniPlayerMode = enabled
         if (enabled) hidePlayerUiInternal()
         persistentWebView?.let(::applyPlayerPresentationMode)

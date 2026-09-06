@@ -1,7 +1,6 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,10 +17,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -41,6 +44,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,32 +86,55 @@ fun TvShowEpisodeList(
     onDownloadEpisode: ((TmdbEpisodeItem) -> Unit)? = null,
     isEpisodeDownloaded: (Int, Int) -> Boolean = { _, _ -> false },
     getEpisodeDownloadProgress: (Int, Int) -> Int? = { _, _ -> null },
-    modifier: Modifier = Modifier
+    isEpisodeWatched: (Int, Int) -> Boolean = { _, _ -> false },
+    isLoading: Boolean = false,
+    modifier: Modifier = Modifier,
+    // Playing position's season. Defaults to the viewed season so existing
+    // callers/tests keep working; Watch passes video.currentSeason so the
+    // NOW PLAYING badge tracks playback, not the season tab being browsed.
+    currentSeasonNumber: Int = selectedSeason
 ) {
-    var isExpanded by rememberSaveable { mutableStateOf(false) }
-    val seasonsCount = maxOf(totalSeasons, selectedSeason, 1)
+    // Open by default (Netflix behaviour) — one less tap to reach episodes.
+    var isExpanded by rememberSaveable { mutableStateOf(true) }
+    val haptics = LocalHapticFeedback.current
+    // Never invent phantom seasons from stale selectedSeason state.
+    val seasonsCount = totalSeasons.coerceAtLeast(1)
+    val safeSelectedSeason = selectedSeason.coerceIn(1, seasonsCount)
+    val safeCurrentSeason = currentSeasonNumber.coerceAtLeast(1)
     val seasonEpisodes = episodes
         .asSequence()
-        .filter { it.seasonNumber == selectedSeason }
+        .filter { it.seasonNumber == safeSelectedSeason }
         .sortedBy { it.episodeNumber }
         .toList()
+    // Up Next only makes sense while viewing the season that's playing —
+    // otherwise browsing S2 during S1E1 would suggest S2E2 as "next".
+    val browsingPlayingSeason = safeSelectedSeason == safeCurrentSeason
     val nextEpisode = seasonEpisodes.firstOrNull {
-        it.episodeNumber > currentEpisodeNumber && !isUnreleased(it.airDate)
+        browsingPlayingSeason &&
+            it.episodeNumber > currentEpisodeNumber && !isUnreleased(it.airDate)
     }
-    val nextSeasonAvailable = nextEpisode == null && selectedSeason < seasonsCount
+    val nextSeasonAvailable = nextEpisode == null && safeSelectedSeason < seasonsCount
+    val watchedInSeason = seasonEpisodes.count { isEpisodeWatched(it.seasonNumber, it.episodeNumber) }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
             .testTag("tv_episodes_section")
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
-                .clickable { isExpanded = !isExpanded }
-                .padding(vertical = 4.dp)
+                .clickable(
+                    role = Role.Button,
+                    onClickLabel = if (isExpanded) "Collapse episodes" else "Expand episodes",
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        isExpanded = !isExpanded
+                    }
+                )
+                .padding(vertical = 6.dp)
                 .testTag("episodes_toggle"),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -117,21 +146,23 @@ fun TvShowEpisodeList(
                     imageVector = Icons.Default.Tv,
                     contentDescription = null,
                     tint = YouTubeRed,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
                         text = "Episodes",
-                        fontSize = 16.sp,
+                        fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
                         text = if (seasonEpisodes.isEmpty()) {
-                            "Season $selectedSeason · Episode $currentEpisodeNumber"
+                            "Season $safeSelectedSeason · Episode $currentEpisodeNumber"
+                        } else if (watchedInSeason > 0) {
+                            "Season $safeSelectedSeason · ${seasonEpisodes.size} episodes • $watchedInSeason watched"
                         } else {
-                            "Season $selectedSeason · ${seasonEpisodes.size} episodes"
+                            "Season $safeSelectedSeason · ${seasonEpisodes.size} episodes"
                         },
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -143,18 +174,25 @@ fun TvShowEpisodeList(
                 imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                 contentDescription = if (isExpanded) "Collapse episodes" else "Expand episodes",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(20.dp)
             )
 
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(16.dp))
                     .background(
                         if (isAutoNextEnabled) YouTubeRed.copy(alpha = 0.14f)
                         else MaterialTheme.colorScheme.surfaceVariant
                     )
-                    .clickable(onClick = onToggleAutoNext)
-                    .padding(horizontal = 9.dp, vertical = 6.dp)
+                    .clickable(
+                        role = Role.Switch,
+                        onClickLabel = "Toggle auto-play next episode",
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onToggleAutoNext()
+                        }
+                    )
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
                     .testTag("auto_next_toggle_pill"),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -174,152 +212,189 @@ fun TvShowEpisodeList(
             }
         }
 
-        if (!isExpanded) return@Column
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        LazyRow(
-            contentPadding = PaddingValues(end = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("season_selector_row")
+        AnimatedVisibility(
+            visible = isExpanded,
+            enter = expandVertically(),
+            exit = shrinkVertically()
         ) {
-            items(
-                count = seasonsCount,
-                key = { index -> index + 1 },
-                contentType = { "season_chip" }
-            ) { index ->
-                val season = index + 1
-                val isSelected = season == selectedSeason
-                Row(
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Spacer(modifier = Modifier.height(4.dp))
+
+                LazyRow(
+                    contentPadding = PaddingValues(end = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier
-                        .clip(SeasonChipShape)
-                        .background(
-                            if (isSelected) YouTubeRed
-                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
-                        )
-                        .then(
-                            if (!isSelected) {
-                                Modifier.border(
-                                    1.dp,
-                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.12f),
-                                    SeasonChipShape
-                                )
-                            } else {
-                                Modifier
-                            }
-                        )
-                        .clickable { onSelectSeason(season) }
-                        .padding(horizontal = 13.dp, vertical = 8.dp)
-                        .testTag("season_chip_$season"),
-                    verticalAlignment = Alignment.CenterVertically
+                        .fillMaxWidth()
+                        .testTag("season_selector_row")
                 ) {
-                    if (isSelected) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                    }
-                    Text(
-                        text = "Season $season",
-                        fontSize = 12.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        if (onDownloadSeason != null && seasonEpisodes.isNotEmpty()) {
-            val allSeasonDownloaded = seasonEpisodes.all { isEpisodeDownloaded(it.seasonNumber, it.episodeNumber) }
-            val downloadedCount = seasonEpisodes.count { isEpisodeDownloaded(it.seasonNumber, it.episodeNumber) }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    .clickable { onDownloadSeason(selectedSeason, seasonEpisodes) }
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                    .testTag("download_season_btn"),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = if (allSeasonDownloaded) Icons.Default.CheckCircle else Icons.Default.Download,
-                        contentDescription = null,
-                        tint = if (allSeasonDownloaded) Color(0xFF4CAF50) else YouTubeRed,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (allSeasonDownloaded) {
-                            "Season $selectedSeason Downloaded (${seasonEpisodes.size} eps)"
-                        } else if (downloadedCount > 0) {
-                            "Download Season $selectedSeason ($downloadedCount/${seasonEpisodes.size} downloaded)"
-                        } else {
-                            "Download Season $selectedSeason (${seasonEpisodes.size} episodes)"
-                        },
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-        }
-
-        if (seasonEpisodes.isEmpty()) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                repeat(4) { EpisodeItemCardSkeleton() }
-            }
-        } else {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                seasonEpisodes.forEach { episode ->
-                    val isCurrent = episode.episodeNumber == currentEpisodeNumber
-                    val isUpcoming = isUnreleased(episode.airDate)
-                    val isDownloaded = isEpisodeDownloaded(episode.seasonNumber, episode.episodeNumber)
-                    val progress = getEpisodeDownloadProgress(episode.seasonNumber, episode.episodeNumber)
-                    EpisodeItemCard(
-                        episode = episode,
-                        thumbnailUrl = episode.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
-                            ?: fallbackThumbnailUrl,
-                        isPlaying = isCurrent,
-                        isUpcoming = isUpcoming,
-                        isAlertActive = isEpisodeAlertActive(episode.seasonNumber, episode.episodeNumber),
-                        isDownloaded = isDownloaded,
-                        downloadProgress = progress,
-                        onDownload = if (onDownloadEpisode != null && !isUpcoming) {
-                            { onDownloadEpisode(episode) }
-                        } else null,
-                        onClick = {
-                            if (!isUpcoming) {
-                                onSelectEpisode(episode.seasonNumber, episode.episodeNumber)
+                    items(
+                        count = seasonsCount,
+                        key = { index -> index + 1 },
+                        contentType = { "season_chip" }
+                    ) { index ->
+                        val season = index + 1
+                        val isSelected = season == safeSelectedSeason
+                        Row(
+                            modifier = Modifier
+                                .clip(SeasonChipShape)
+                                .background(
+                                    if (isSelected) YouTubeRed
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                )
+                                .clickable(
+                                    role = Role.Tab,
+                                    onClickLabel = "Show season $season",
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onSelectSeason(season)
+                                    }
+                                )
+                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                                .testTag("season_chip_$season"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
                             }
-                        },
-                        onNotify = { onNotifyEpisode(episode) }
-                    )
+                            Text(
+                                text = "S$season",
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                 }
 
-                if (nextEpisode != null || nextSeasonAvailable) {
-                    UpNextEpisodeCard(
-                        nextEpisode = nextEpisode,
-                        nextSeason = if (nextEpisode == null) selectedSeason + 1 else null,
-                        isAutoNextEnabled = isAutoNextEnabled,
-                        onClick = onPlayNextEpisode
-                    )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (onDownloadSeason != null && seasonEpisodes.isNotEmpty()) {
+                    val allSeasonDownloaded = seasonEpisodes.all { isEpisodeDownloaded(it.seasonNumber, it.episodeNumber) }
+                    val downloadedCount = seasonEpisodes.count { isEpisodeDownloaded(it.seasonNumber, it.episodeNumber) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                            .clickable(
+                                role = Role.Button,
+                                onClickLabel = "Download season $safeSelectedSeason",
+                                onClick = { onDownloadSeason(safeSelectedSeason, seasonEpisodes) }
+                            )
+                            .padding(horizontal = 10.dp, vertical = 9.dp)
+                            .testTag("download_season_btn"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (allSeasonDownloaded) Icons.Default.CheckCircle else Icons.Default.Download,
+                                contentDescription = null,
+                                tint = if (allSeasonDownloaded) Color(0xFF4CAF50) else YouTubeRed,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (allSeasonDownloaded) {
+                                    "Season $safeSelectedSeason downloaded (${seasonEpisodes.size})"
+                                } else if (downloadedCount > 0) {
+                                    "Season $safeSelectedSeason ($downloadedCount/${seasonEpisodes.size})"
+                                } else {
+                                    "Download season $safeSelectedSeason (${seasonEpisodes.size})"
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                if (seasonEpisodes.isEmpty()) {
+                    if (isLoading) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            repeat(4) { EpisodeItemCardSkeleton() }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                                .padding(16.dp)
+                                .testTag("episodes_empty_state"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Inbox,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "No episodes available for Season $safeSelectedSeason yet.",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        seasonEpisodes.forEach { episode ->
+                            // Playing badge follows PLAYBACK (current season +
+                            // episode), never the season tab being browsed —
+                            // otherwise S1E1 playing would also light up S2E1.
+                            val isCurrent = episode.episodeNumber == currentEpisodeNumber &&
+                                episode.seasonNumber == safeCurrentSeason
+                            val isUpcoming = isUnreleased(episode.airDate)
+                            val isDownloaded = isEpisodeDownloaded(episode.seasonNumber, episode.episodeNumber)
+                            val progress = getEpisodeDownloadProgress(episode.seasonNumber, episode.episodeNumber)
+                            val isWatched = isEpisodeWatched(episode.seasonNumber, episode.episodeNumber)
+                            EpisodeItemCard(
+                                episode = episode,
+                                thumbnailUrl = episode.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+                                    ?: fallbackThumbnailUrl,
+                                isPlaying = isCurrent,
+                                isUpcoming = isUpcoming,
+                                isWatched = isWatched,
+                                isAlertActive = isEpisodeAlertActive(episode.seasonNumber, episode.episodeNumber),
+                                isDownloaded = isDownloaded,
+                                downloadProgress = progress,
+                                onDownload = if (onDownloadEpisode != null && !isUpcoming) {
+                                    { onDownloadEpisode(episode) }
+                                } else null,
+                                onClick = {
+                                    if (!isUpcoming) {
+                                        onSelectEpisode(episode.seasonNumber, episode.episodeNumber)
+                                    }
+                                },
+                                onNotify = { onNotifyEpisode(episode) }
+                            )
+                        }
+
+                        if (browsingPlayingSeason && (nextEpisode != null || nextSeasonAvailable)) {
+                            UpNextEpisodeCard(
+                                nextEpisode = nextEpisode,
+                                nextSeason = if (nextEpisode == null) safeSelectedSeason + 1 else null,
+                                isAutoNextEnabled = isAutoNextEnabled,
+                                onClick = onPlayNextEpisode
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -336,6 +411,7 @@ private fun EpisodeItemCard(
     isAlertActive: Boolean,
     onNotify: () -> Unit,
     isDownloaded: Boolean = false,
+    isWatched: Boolean = false,
     downloadProgress: Int? = null,
     onDownload: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -356,34 +432,39 @@ private fun EpisodeItemCard(
                 YouTubeRed.copy(alpha = 0.10f)
             } else if (isUpcoming) {
                 MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
+            } else if (isWatched) {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f)
             } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f)
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)
             }
         ),
+        // Border only on the playing row — borders on every row looked heavy.
         border = if (isPlaying) {
             androidx.compose.foundation.BorderStroke(1.dp, YouTubeRed.copy(alpha = 0.58f))
         } else {
-            androidx.compose.foundation.BorderStroke(
-                1.dp,
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.10f)
-            )
+            null
         },
         modifier = modifier
             .fillMaxWidth()
-            .clickable(enabled = !isUpcoming, onClick = onClick)
+            .clickable(
+                enabled = !isUpcoming,
+                role = Role.Button,
+                onClickLabel = "Play ${episode.name}",
+                onClick = onClick
+            )
             .testTag("episode_item_${episode.seasonNumber}_${episode.episodeNumber}")
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp),
+                .padding(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .width(132.dp)
+                    .width(112.dp)
                     .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(7.dp))
                     .background(MaterialTheme.colorScheme.surface)
             ) {
                 AsyncImage(
@@ -413,7 +494,7 @@ private fun EpisodeItemCard(
                     Box(
                         modifier = Modifier
                             .align(Alignment.Center)
-                            .size(32.dp)
+                            .size(28.dp)
                             .clip(RoundedCornerShape(50))
                             .background(YouTubeRed),
                         contentAlignment = Alignment.Center
@@ -422,7 +503,23 @@ private fun EpisodeItemCard(
                             imageVector = Icons.Default.PlayArrow,
                             contentDescription = "Now playing",
                             tint = Color.White,
-                            modifier = Modifier.size(19.dp)
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                } else if (isWatched && !isUpcoming) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(24.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.Black.copy(alpha = 0.65f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Watched",
+                            tint = Color(0xFF4CAF50),
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                 }
@@ -446,34 +543,42 @@ private fun EpisodeItemCard(
                 }
             }
 
-            Spacer(modifier = Modifier.width(11.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 3.dp)
+                    .padding(end = 2.dp)
             ) {
-                if (isPlaying || isUpcoming) {
+                if (isPlaying || isUpcoming || (isWatched && !isUpcoming)) {
                     Text(
-                        text = if (isPlaying) "NOW PLAYING" else "UPCOMING",
+                        text = when {
+                            isPlaying -> "NOW PLAYING"
+                            isUpcoming -> "UPCOMING"
+                            else -> "WATCHED"
+                        },
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Black,
-                        color = if (isPlaying) YouTubeRed else MaterialTheme.colorScheme.primary,
+                        color = when {
+                            isPlaying -> YouTubeRed
+                            isUpcoming -> MaterialTheme.colorScheme.primary
+                            else -> Color(0xFF4CAF50)
+                        },
                         letterSpacing = 0.4.sp
                     )
-                    Spacer(modifier = Modifier.height(3.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                 }
                 Text(
-                    text = episode.name,
-                    fontSize = 14.sp,
+                    text = "E${episode.episodeNumber} · ${episode.name}",
+                    fontSize = 13.sp,
                     fontWeight = if (isPlaying || isUpcoming) FontWeight.Bold else FontWeight.SemiBold,
                     color = if (isPlaying) YouTubeRed else MaterialTheme.colorScheme.onBackground,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 18.sp
+                    lineHeight = 17.sp
                 )
                 if (episodeMeta.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(5.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = episodeMeta,
                         fontSize = 11.sp,
@@ -483,12 +588,12 @@ private fun EpisodeItemCard(
                     )
                 }
                 if (!episode.overview.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = episode.overview,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         lineHeight = 14.sp
                     )
@@ -499,7 +604,7 @@ private fun EpisodeItemCard(
                 IconButton(
                     onClick = onNotify,
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(32.dp)
                         .testTag("episode_notify_${episode.seasonNumber}_${episode.episodeNumber}")
                 ) {
                     Icon(
@@ -520,7 +625,7 @@ private fun EpisodeItemCard(
                 IconButton(
                     onClick = onDownload,
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(32.dp)
                         .testTag("episode_download_${episode.seasonNumber}_${episode.episodeNumber}")
                 ) {
                     if (isDownloaded) {
@@ -528,12 +633,12 @@ private fun EpisodeItemCard(
                             imageVector = Icons.Default.CheckCircle,
                             contentDescription = "Downloaded",
                             tint = Color(0xFF4CAF50),
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     } else if (downloadProgress != null) {
                         CircularProgressIndicator(
                             progress = { downloadProgress / 100f },
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
                             color = YouTubeRed
                         )
@@ -542,7 +647,7 @@ private fun EpisodeItemCard(
                             imageVector = Icons.Default.Download,
                             contentDescription = "Download episode",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }

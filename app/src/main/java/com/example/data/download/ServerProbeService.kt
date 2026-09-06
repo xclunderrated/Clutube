@@ -132,9 +132,9 @@ object ServerProbeService {
             isOnline = response.isSuccessful || response.code in 200..399 || response.code == 403 // 403 means server reached but requires embed origin
             response.close()
         } catch (e: Exception) {
-            Log.d(TAG, "Probe ping completed with fallback for $host: ${e.message}")
-            pingMs = (System.currentTimeMillis() - startTime).coerceIn(25L, 85L)
-            isOnline = true
+            Log.d(TAG, "Probe failed for $host: ${e.message}")
+            pingMs = (System.currentTimeMillis() - startTime).coerceAtLeast(0L)
+            isOnline = false
         }
 
         // Generate tailored available resolutions based on server capabilities
@@ -154,16 +154,16 @@ object ServerProbeService {
         }
 
         val statusMsg = if (isOnline) {
-            "Online · ${pingMs}ms · Verified stream streamable"
+            "Online · ${pingMs}ms"
         } else {
-            "Online via Mirror fallback · ${pingMs}ms"
+            "Offline or unreachable"
         }
 
         ServerCapabilityResult(
             serverId = serverId,
             serverName = serverName,
             host = host,
-            isOnline = true,
+            isOnline = isOnline,
             latencyMs = pingMs,
             availableResolutions = resolutions,
             availableCcLanguages = ccList,

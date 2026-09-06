@@ -482,10 +482,27 @@ internal object PlaybackScript {
                     }
                 }
                 reportReadyWhenUsable();
+                // Re-applying quality/captions and postMessaging every
+                // preference object into nested provider iframes every second
+                // makes VidSrc stutter. Preferences only change on explicit
+                // user action, so only rebroadcast when the payload differs.
+                var lastBroadcastPreferenceKey = null;
+                var hadUsableVideo = false;
+                function preferenceKey() {
+                    return preferredQuality + '|' + preferredSubtitles;
+                }
                 window.__cluPlaybackInterval = setInterval(function() {
-                    hookVideos();
-                    if (lastPreference) applyProviderPreference(lastPreference);
-                    broadcastPlaybackPreference();
+                    var usable = hookVideos();
+                    var key = preferenceKey();
+                    // Rebroadcast on change, plus once when a usable video
+                    // first appears so late-mounting JW players still get
+                    // the quality/caption selection.
+                    if (key !== lastBroadcastPreferenceKey || (usable && !hadUsableVideo)) {
+                        lastBroadcastPreferenceKey = key;
+                        if (lastPreference) applyProviderPreference(lastPreference);
+                        broadcastPlaybackPreference();
+                    }
+                    hadUsableVideo = usable;
                     reportReadyWhenUsable();
                     window.__cluReportPlayback();
                 }, 1000);

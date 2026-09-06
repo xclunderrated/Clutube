@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,22 +38,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.example.model.MediaType
 import com.example.model.VideoItem
 import com.example.ui.theme.YTBlueVerified
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
-import com.example.util.rememberThumbnailRequestWithFallback
 
 /**
  * Compact, sleek horizontal card designed specifically for "Up Next & Related" side panels on tablets
@@ -67,19 +67,34 @@ fun CompactRelatedVideoCard(
     onDownload: (() -> Unit)? = null,
     onAddToQueue: (() -> Unit)? = null,
     isWatched: Boolean = false,
+    isSaved: Boolean = false,
+    progressFraction: Float? = null,
+    continueLabel: String? = null,
     onToggleWatched: (() -> Unit)? = null,
     onNotInterested: (() -> Unit)? = null,
     onNotRecommendChannel: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    val badgeText: String? = remember(video) {
+        if (video.mediaType == MediaType.TV_SHOW) {
+            "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}"
+        } else {
+            video.duration.takeUnless { it.isBlank() || it.equals("TV SERIES", ignoreCase = true) }
+        }
+    }
+    val effectiveProgress = progressFraction?.takeIf { it > 0.01f && it < 0.99f }
 
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
-            .clickable { onClick() }
+            .clickable(
+                onClick = onClick,
+                role = Role.Button,
+                onClickLabel = "Play ${video.title}"
+            )
             .padding(8.dp)
             .testTag("compact_related_video_card_${video.id}"),
         verticalAlignment = Alignment.Top
@@ -115,27 +130,47 @@ fun CompactRelatedVideoCard(
                 }
             }
 
-            // Media Type Badge (Top Right)
+            // Unified media-type badge (Top Start) + saved indicator (Top End).
             if (video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
+                        .align(Alignment.TopStart)
                         .padding(3.dp)
                         .clip(RoundedCornerShape(3.dp))
-                        .background(YouTubeRed.copy(alpha = 0.9f))
+                        .background(
+                            if (video.mediaType == MediaType.TV_SHOW) YouTubeRed.copy(alpha = 0.9f)
+                            else Color.Black.copy(alpha = 0.78f)
+                        )
                         .padding(horizontal = 4.dp, vertical = 1.dp)
                 ) {
                     Text(
-                        text = if (video.mediaType == MediaType.TV_SHOW) "TV" else "4K",
+                        text = if (video.mediaType == MediaType.TV_SHOW) "TV" else "MOVIE",
                         color = Color.White,
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
             }
+            if (isSaved) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(3.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(Color.Black.copy(alpha = 0.78f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        text = "SAVED",
+                        color = Color.White,
+                        fontSize = 7.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
 
-            // Duration Badge (Bottom Right)
-            if (video.duration.isNotBlank()) {
+            // Duration / S:E Badge (Bottom Right) — never show literal "TV SERIES".
+            if (!badgeText.isNullOrBlank()) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
@@ -145,12 +180,22 @@ fun CompactRelatedVideoCard(
                         .padding(horizontal = 4.dp, vertical = 1.dp)
                 ) {
                     Text(
-                        text = video.duration,
+                        text = badgeText,
                         color = Color.White,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium
                     )
                 }
+            }
+
+            if (effectiveProgress != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth(effectiveProgress.coerceIn(0f, 1f))
+                        .height(3.dp)
+                        .background(YouTubeRed)
+                )
             }
         }
 
@@ -199,10 +244,24 @@ fun CompactRelatedVideoCard(
                 }
             }
 
-            val metadata = listOfNotNull(
-                video.views.takeIf { it.isNotBlank() },
-                video.publishedAt.takeIf { it.isNotBlank() }
-            ).joinToString(" • ")
+            // Cleaner single-line metadata with rating + year (YouTube look kept).
+            val releaseYear = remember(video) {
+                video.releaseDateFormatted?.take(4)?.takeIf { it.all(Char::isDigit) }
+                    ?: video.releaseDateIso?.take(4)?.takeIf { it.all(Char::isDigit) }
+            }
+            val ratingText = remember(video) {
+                video.rating?.takeIf { it > 0 }?.let { String.format(java.util.Locale.US, "%.1f", it) }
+            }
+            val metadata = remember(video, releaseYear, ratingText) {
+                buildList {
+                    if (!ratingText.isNullOrBlank()) add("★ $ratingText")
+                    if (!releaseYear.isNullOrBlank()) add(releaseYear)
+                    if (video.mediaType == MediaType.TV_SHOW) add("TV Series")
+                    else if (video.mediaType == MediaType.MOVIE) add("Movie")
+                    if (video.views.isNotBlank()) add(video.views)
+                    if (video.publishedAt.isNotBlank()) add(video.publishedAt)
+                }.joinToString(" • ")
+            }
             if (metadata.isNotBlank()) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -215,17 +274,33 @@ fun CompactRelatedVideoCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            if (!continueLabel.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = continueLabel,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = YouTubeRed,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
 
-        // Context Menu Icon
+        // Context Menu Icon (40dp touch target)
         Box {
             IconButton(
-                onClick = { menuExpanded = true },
-                modifier = Modifier.size(24.dp)
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    menuExpanded = true
+                },
+                modifier = Modifier
+                    .size(40.dp)
+                    .heightIn(min = 40.dp)
             ) {
                 Icon(
                     imageVector = Icons.Default.MoreVert,
-                    contentDescription = "Options",
+                    contentDescription = "Options for ${video.title}",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     modifier = Modifier.size(16.dp)
                 )

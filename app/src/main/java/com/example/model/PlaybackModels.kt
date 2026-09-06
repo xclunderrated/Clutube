@@ -101,6 +101,47 @@ data class WatchHistoryEntry(
     }
 }
 
+/** Netflix-style resume rewind so playback restarts with context. */
+const val RESUME_REWIND_SECONDS = 10L
+
+/** Positions at or below this restart from zero instead of rewinding. */
+const val RESUME_REWIND_MIN_POSITION_SECONDS = 15L
+
+/** Progress below this fraction is treated as "not started" for shelf display. */
+const val MIN_VISIBLE_PROGRESS_FRACTION = 0.01f
+
+/**
+ * Title-level grouping key shared by the Continue shelf, feed dedupe, and
+ * progress lookups. TV episodes of one show share a slot; movies keep their
+ * exact playback key so unrelated titles can never merge.
+ */
+fun WatchHistoryEntry.titleGroupKey(): String {
+    val contentId = listOf(video.tmdbId, video.imdbId, video.id)
+        .firstOrNull { !it.isNullOrBlank() }
+        ?.trim()
+        ?.lowercase(Locale.ROOT)
+        .orEmpty()
+    return if (video.mediaType == MediaType.TV_SHOW) {
+        "tv:$contentId"
+    } else {
+        key
+    }
+}
+
+/** Same grouping for a catalog video (defaults to S1:E1 for TV). */
+fun VideoItem.titleGroupKey(): String {
+    val contentId = listOf(tmdbId, imdbId, id)
+        .firstOrNull { !it.isNullOrBlank() }
+        ?.trim()
+        ?.lowercase(Locale.ROOT)
+        .orEmpty()
+    return if (mediaType == MediaType.TV_SHOW) {
+        "tv:$contentId"
+    } else {
+        playbackKey()
+    }
+}
+
 /**
  * Continue Watching is a title-level shelf. Playback history remains
  * episode-specific, but a TV show should occupy one shelf slot and point to
@@ -110,20 +151,7 @@ fun deduplicateContinueWatching(entries: List<WatchHistoryEntry>): List<WatchHis
     return entries
         .asSequence()
         .filterNot { it.completed }
-        .groupBy { entry ->
-            val contentId = listOf(entry.video.tmdbId, entry.video.imdbId, entry.video.id)
-                .firstOrNull { !it.isNullOrBlank() }
-                ?.trim()
-                ?.lowercase(Locale.ROOT)
-                .orEmpty()
-            if (entry.video.mediaType == MediaType.TV_SHOW) {
-                "tv:$contentId"
-            } else {
-                // Movie progress is already episode-free; preserve its exact
-                // playback key so unrelated titles cannot be merged.
-                entry.key
-            }
-        }
+        .groupBy { it.titleGroupKey() }
         .mapNotNull { (_, groupedEntries) ->
             groupedEntries.maxWithOrNull(
                 compareBy<WatchHistoryEntry> { it.lastWatchedAtMillis }
@@ -132,6 +160,73 @@ fun deduplicateContinueWatching(entries: List<WatchHistoryEntry>): List<WatchHis
         }
         .sortedByDescending { it.lastWatchedAtMillis }
         .toList()
+}
+
+/**
+ * Single render model for every Continue/progress surface. Season/episode
+ * are coerced so S0:E0 can never leak into badges, and the label format is
+ * identical everywhere: "S2:E4 • 12:40 left" for TV, "12:40 left" otherwise.
+ */
+@Immutable
+data class ContinueWatchingUiModel(
+    val entry: WatchHistoryEntry,
+    val displaySeason: Int,
+    val displayEpisode: Int,
+    val progressFraction: Float,
+    val label: String
+)
+
+fun WatchHistoryEntry.toContinueUiModel(): ContinueWatchingUiModel {
+    val season = video.currentSeason.coerceAtLeast(1)
+    val episode = video.currentEpisode.coerceAtLeast(1)
+    val label = if (video.mediaType == MediaType.TV_SHOW) {
+        "S$season:E$episode • ${formatPlaybackTime(remainingSeconds)} left"
+    } else {
+        "${formatPlaybackTime(remainingSeconds)} left"
+    }
+    return ContinueWatchingUiModel(
+        entry = this,
+        displaySeason = season,
+        displayEpisode = episode,
+        progressFraction = progressFraction,
+        label = label
+    )
+}
+
+fun List<WatchHistoryEntry>.toContinueUiModels(): List<ContinueWatchingUiModel> =
+    deduplicateContinueWatching(this)
+        .filter { !it.completed && it.durationSeconds > 0L && it.progressFraction > MIN_VISIBLE_PROGRESS_FRACTION }
+        .map { it.toContinueUiModel() }
+
+/**
+ * Shared card lookup: exact playback-key match first, then the series-latest
+ * entry for the same title group (so an S1:E1 catalog card reflects the S3:E7
+ * resume point instead of a stranger's progress). Never falls back to a bare
+ * video id, which previously let the oldest episode win.
+ */
+fun findProgressEntry(video: VideoItem, entries: List<WatchHistoryEntry>): WatchHistoryEntry? {
+    val key = video.playbackKey()
+    entries.firstOrNull { it.key == key && !it.completed }?.let { return it }
+    if (video.mediaType == MediaType.TV_SHOW) {
+        val group = video.titleGroupKey()
+        return entries
+            .asSequence()
+            .filter { !it.completed && it.titleGroupKey() == group }
+            .maxWithOrNull(compareBy<WatchHistoryEntry> { it.lastWatchedAtMillis }.thenBy { it.positionSeconds })
+    }
+    return null
+}
+
+/**
+ * Netflix-style resume point: rewind a few seconds for context, restart from
+ * zero when barely started, and never rewind a finished title (callers
+ * restart completed entries from zero separately).
+ */
+fun WatchHistoryEntry.resumePositionSeconds(
+    rewindSeconds: Long = RESUME_REWIND_SECONDS
+): Double {
+    if (completed || positionSeconds <= RESUME_REWIND_MIN_POSITION_SECONDS) return 0.0
+    return max(0L, positionSeconds - rewindSeconds).toDouble()
 }
 
 @Immutable

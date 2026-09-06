@@ -142,7 +142,7 @@ internal object StreamPlayerSkin {
             if (connection.responseCode !in 200..299) return null
 
             val upstreamJs = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val combinedJs = upstreamJs + "\n\n" + TOP_ACTIONS_RUNTIME + AUTOPLAY_RUNTIME + PLAYER_COMMAND_RUNTIME + PLAYER_PREFERENCE_RUNTIME + PLAYER_UI_RUNTIME
+            val combinedJs = upstreamJs + "\n\n" + TOP_ACTIONS_RUNTIME + AUTOPLAY_RUNTIME + PLAYER_COMMAND_RUNTIME + PLAYER_PREFERENCE_RUNTIME + PLAYER_UI_RUNTIME + PLAYER_SNAPSHOT_RUNTIME
             WebResourceResponse(
                 "application/javascript",
                 "UTF-8",
@@ -180,7 +180,7 @@ internal object StreamPlayerSkin {
             if (connection.responseCode !in 200..299) return null
 
             val upstreamJs = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val combinedJs = upstreamJs + "\n\n" + PLAYER_PREFERENCE_RUNTIME
+            val combinedJs = upstreamJs + "\n\n" + PLAYER_COMMAND_RUNTIME + PLAYER_PREFERENCE_RUNTIME + PLAYER_SNAPSHOT_RUNTIME
             WebResourceResponse(
                 "application/javascript",
                 "UTF-8",
@@ -416,6 +416,105 @@ internal object StreamPlayerSkin {
         });
     };
     window.addEventListener('message', window.__cluPlayerCommandListener);
+})();
+"""
+
+    /**
+     * Reports nested-frame playback position to the outer WebView.
+     *
+     * VidSrc's real player lives in a cross-origin iframe that the outer
+     * PlaybackScript cannot query, so this runtime runs *inside* the frame
+     * (injected alongside the command listener) and forwards snapshots via
+     * `PLAYER_EVENT` postMessages. The outer page already consumes exactly
+     * this shape (`PlaybackScript.emitProviderEvent`). VidLink gets the same
+     * reporter so skip timing does not depend on same-document video access.
+     * Throttled to match the outer 750ms snapshot cadence.
+     */
+    private const val PLAYER_SNAPSHOT_RUNTIME = """
+(function () {
+    'use strict';
+    var lastReport = 0;
+
+    function currentState() {
+        var pos = NaN;
+        var dur = NaN;
+        var playing = null;
+        try {
+            var jw = window.__JW;
+            if (jw && jw.state) {
+                if (typeof jw.state.position === 'number') pos = jw.state.position;
+                else if (typeof jw.state.currentTime === 'number') pos = jw.state.currentTime;
+                if (typeof jw.state.duration === 'number') dur = jw.state.duration;
+                if (typeof jw.state.playing === 'boolean') playing = jw.state.playing;
+            }
+        } catch (_) {}
+        var video = null;
+        try {
+            video = document.getElementById('video') || document.querySelector('video');
+        } catch (_) {}
+        if (video) {
+            try {
+                if (!isFinite(pos) || pos < 0) {
+                    var currentTime = Number(video.currentTime);
+                    if (isFinite(currentTime) && currentTime >= 0) pos = currentTime;
+                }
+                if (!isFinite(dur) || dur <= 0) {
+                    var duration = Number(video.duration);
+                    if (isFinite(duration) && duration > 0) dur = duration;
+                }
+                if (playing === null) playing = !video.paused;
+            } catch (_) {}
+        }
+        if ((!isFinite(pos) || !isFinite(dur) || dur <= 0) &&
+            window.videojs && window.videojs.players) {
+            try {
+                var keys = Object.keys(window.videojs.players);
+                if (keys.length) {
+                    var player = window.videojs.players[keys[0]];
+                    if (player) {
+                        if ((!isFinite(pos) || pos < 0) && typeof player.currentTime === 'function') {
+                            var jsPos = Number(player.currentTime());
+                            if (isFinite(jsPos) && jsPos >= 0) pos = jsPos;
+                        }
+                        if ((!isFinite(dur) || dur <= 0) && typeof player.duration === 'function') {
+                            var jsDur = Number(player.duration());
+                            if (isFinite(jsDur) && jsDur > 0) dur = jsDur;
+                        }
+                        if (playing === null && typeof player.paused === 'function') {
+                            playing = !player.paused();
+                        }
+                    }
+                }
+            } catch (_) {}
+        }
+        return { pos: pos, dur: dur, playing: playing };
+    }
+
+    function report(force) {
+        var now = Date.now();
+        if (!force && now - lastReport < 750) return;
+        var state = currentState();
+        if (!isFinite(state.pos) || !isFinite(state.dur)) return;
+        if (state.pos <= 0 && state.dur <= 0) return;
+        lastReport = now;
+        try {
+            var target = window.parent || window;
+            target.postMessage({
+                type: 'PLAYER_EVENT',
+                data: {
+                    player_status: state.playing ? 'playing' : 'paused',
+                    player_progress: state.pos,
+                    player_duration: state.dur
+                }
+            }, '*');
+        } catch (_) {}
+    }
+
+    ['timeupdate', 'play', 'pause', 'seeked', 'loadedmetadata', 'durationchange'].forEach(function (name) {
+        document.addEventListener(name, function () { report(name !== 'timeupdate'); }, true);
+    });
+    if (window.__cluSnapshotInterval) clearInterval(window.__cluSnapshotInterval);
+    window.__cluSnapshotInterval = setInterval(function () { report(false); }, 1000);
 })();
 """
 

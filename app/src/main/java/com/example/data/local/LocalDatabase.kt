@@ -263,6 +263,20 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
     }
 }
 
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // Offline subtitle (CC) sidecar support. All columns nullable or
+        // defaulted so existing rows ( incl. legacy subtitleCc labels ) survive.
+        db.execSQL("ALTER TABLE `downloads` ADD COLUMN `subtitleLanguage` TEXT DEFAULT 'en'")
+        db.execSQL("ALTER TABLE `downloads` ADD COLUMN `subtitleFilePath` TEXT")
+        db.execSQL("ALTER TABLE `downloads` ADD COLUMN `subtitleFilesJson` TEXT")
+        db.execSQL("ALTER TABLE `downloads` ADD COLUMN `selectedSubtitleTrackId` TEXT")
+        db.execSQL("ALTER TABLE `downloads` ADD COLUMN `subtitleOffsetMs` INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE `downloads` ADD COLUMN `subtitleReleaseName` TEXT")
+        db.execSQL("ALTER TABLE `downloads` ADD COLUMN `hasEmbeddedSubtitles` INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 @Database(
     entities = [
         CatalogCacheEntity::class,
@@ -273,7 +287,7 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
         WatchLaterEntity::class,
         DownloadEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class LocalDatabase : RoomDatabase() {
@@ -289,7 +303,7 @@ abstract class LocalDatabase : RoomDatabase() {
                 context.applicationContext,
                 LocalDatabase::class.java,
                 "clutube_local.db"
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .fallbackToDestructiveMigration()
                 .build().also { instance = it }
         }

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -40,6 +41,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -284,8 +289,76 @@ fun TorrentSourceDialog(
                     }
                 }
 
+                // Resolution filter chips so a chosen quality actually narrows
+                // the list instead of always surfacing 1080p (highest seeds).
+                var qualityFilter by remember(sources) { mutableStateOf<String?>(null) }
+                var verifiedOnly by remember { mutableStateOf(false) }
+                val availableQualities = remember(sources) {
+                    sources.map { it.quality }.distinct().sorted()
+                }
+                val verifiedCount = remember(sources) { sources.count { it.isVerified } }
+                if (availableQualities.size > 1 || verifiedCount > 0) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = qualityFilter == null,
+                            onClick = { qualityFilter = null },
+                            label = { Text("All", fontSize = 11.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = YouTubeRed.copy(alpha = 0.15f),
+                                selectedLabelColor = YouTubeRed
+                            ),
+                            modifier = Modifier.testTag("quality_filter_All")
+                        )
+                        availableQualities.forEach { q ->
+                            FilterChip(
+                                selected = qualityFilter == q,
+                                onClick = { qualityFilter = if (qualityFilter == q) null else q },
+                                label = { Text(q, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = YouTubeRed.copy(alpha = 0.15f),
+                                    selectedLabelColor = YouTubeRed
+                                ),
+                                modifier = Modifier.testTag("quality_filter_$q")
+                            )
+                        }
+                        if (verifiedCount > 0) {
+                            FilterChip(
+                                selected = verifiedOnly,
+                                onClick = { verifiedOnly = !verifiedOnly },
+                                label = { Text("Verified ($verifiedCount)", fontSize = 11.sp) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Verified,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MintEmerald.copy(alpha = 0.18f),
+                                    selectedLabelColor = MintEmerald
+                                ),
+                                modifier = Modifier.testTag("quality_filter_verified")
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+                val visibleSources = remember(sources, qualityFilter, verifiedOnly) {
+                    var list = sources
+                    val q = qualityFilter
+                    if (q != null) list = list.filter { it.quality == q }
+                    if (verifiedOnly) list = list.filter { it.isVerified }
+                    list
+                }
+
                 // Sources List
-                if (sources.isEmpty() && !isLoading) {
+                if (visibleSources.isEmpty() && !isLoading) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -294,7 +367,8 @@ fun TorrentSourceDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "No verified torrent sources found for this release yet.\nYou can also paste a direct magnet link in Downloads.",
+                            text = if (sources.isEmpty()) "No verified torrent sources found for this release yet.\nYou can also paste a direct magnet link in Downloads."
+                            else "No sources match this resolution filter. Clear the filter or try Auto-download with another resolution.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -310,7 +384,7 @@ fun TorrentSourceDialog(
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(sources) { source ->
+                        items(visibleSources) { source ->
                             TorrentSourceItemCard(
                                 source = source,
                                 onDownload = {
@@ -376,6 +450,30 @@ private fun TorrentSourceItemCard(
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
+
+                    // Verified indexer badge
+                    if (source.isVerified) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            modifier = Modifier
+                                .background(MintEmerald.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Verified,
+                                contentDescription = "Verified source",
+                                tint = MintEmerald,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                text = "VERIFIED",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MintEmerald
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))

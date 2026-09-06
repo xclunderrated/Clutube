@@ -70,33 +70,53 @@ object TorrentIndexerService {
     }
 
     /**
-     * Resolves real torrent sources for a Movie across multiple live indexers (Torrentio, YTS, PirateBay)
+     * Resolves real torrent sources for a Movie across all verified live
+     * indexers (see TorrentSourceRegistry). Pass [enabledIndexers] to honor
+     * user-disabled sources; null/empty means all.
      */
     suspend fun resolveMovieTorrents(
         imdbId: String?,
         title: String,
-        year: String?
+        year: String?,
+        enabledIndexers: Set<String>? = null
     ): List<TorrentSource> = withContext(Dispatchers.IO) {
         val results = mutableListOf<TorrentSource>()
         val resolvedImdb = resolveImdbId(imdbId, isMovie = true) ?: imdbId
+        val enabled = enabledIndexers?.map { it.trim().lowercase() }?.toSet().orEmpty()
+        fun on(id: String) = enabled.isEmpty() || id.lowercase() in enabled
 
-        val deferredList = listOf(
+        val deferredList = listOfNotNull(
             // 1. Torrentio Stremio aggregator (aggregates 1337x, TorrentGalaxy, YTS, RARBG, TPB)
-            async {
+            if (on(TorrentSourceRegistry.TORRENTIO)) async {
                 if (!resolvedImdb.isNullOrBlank()) {
                     fetchTorrentioMovieTorrents(resolvedImdb, title)
                 } else emptyList()
-            },
-            // 2. YTS by IMDb or title
-            async {
+            } else null,
+            // 2. YTS by IMDb or title (with mirror fallback)
+            if (on(TorrentSourceRegistry.YTS)) async {
                 val queryTerm = resolvedImdb?.takeIf { it.isNotBlank() } ?: title
                 fetchYtsTorrents(queryTerm, title)
-            },
+            } else null,
             // 3. ThePirateBay (Apibay)
-            async {
+            if (on(TorrentSourceRegistry.PIRATE_BAY)) async {
                 val pbQuery = if (!year.isNullOrBlank()) "$title $year" else title
                 fetchPirateBayTorrents(pbQuery, isMovie = true)
-            }
+            } else null,
+            // 4. SolidTorrents DHT index
+            if (on(TorrentSourceRegistry.SOLID_TORRENTS)) async {
+                val q = if (!year.isNullOrBlank()) "$title $year" else title
+                fetchSolidTorrents(q)
+            } else null,
+            // 5. Nyaa RSS
+            if (on(TorrentSourceRegistry.NYAA)) async {
+                val q = if (!year.isNullOrBlank()) "$title $year" else title
+                fetchNyaaTorrents(q)
+            } else null,
+            // 6. AnimeTosho JSON feed
+            if (on(TorrentSourceRegistry.ANIME_TOSHO)) async {
+                val q = if (!year.isNullOrBlank()) "$title $year" else title
+                fetchAnimeToshoTorrents(q)
+            } else null
         )
 
         // Wait for live indexers with a combined timeout
@@ -113,40 +133,57 @@ object TorrentIndexerService {
     }
 
     /**
-     * Resolves real torrent sources for a TV Series or specific Episode across live indexers (Torrentio, EZTV, PirateBay)
+     * Resolves real torrent sources for a TV Series or specific Episode
+     * across all verified live indexers (see TorrentSourceRegistry).
+     * Pass [enabledIndexers] to honor user-disabled sources; null/empty = all.
      */
     suspend fun resolveTvTorrents(
         imdbId: String?,
         showTitle: String,
         seasonNumber: Int? = null,
-        episodeNumber: Int? = null
+        episodeNumber: Int? = null,
+        enabledIndexers: Set<String>? = null
     ): List<TorrentSource> = withContext(Dispatchers.IO) {
         val results = mutableListOf<TorrentSource>()
         val season = seasonNumber ?: 1
         val episode = episodeNumber ?: 1
 
         val resolvedImdb = resolveImdbId(imdbId, isMovie = false) ?: imdbId
+        val enabled = enabledIndexers?.map { it.trim().lowercase() }?.toSet().orEmpty()
+        fun on(id: String) = enabled.isEmpty() || id.lowercase() in enabled
+        val epCode = "S%02dE%02d".format(season, episode)
+        val cleanTitle = showTitle.replace(Regex("[^a-zA-Z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
 
-        val deferredList = listOf(
+        val deferredList = listOfNotNull(
             // 1. Torrentio Series aggregator
-            async {
+            if (on(TorrentSourceRegistry.TORRENTIO)) async {
                 if (!resolvedImdb.isNullOrBlank()) {
                     fetchTorrentioTvTorrents(resolvedImdb, showTitle, season, episode)
                 } else emptyList()
-            },
+            } else null,
             // 2. EZTV if numeric IMDb ID available
-            async {
+            if (on(TorrentSourceRegistry.EZTV)) async {
                 val numericImdb = resolvedImdb?.removePrefix("tt")?.toIntOrNull()
                 if (numericImdb != null) {
                     fetchEztvTorrents(numericImdb, season, episode)
                 } else emptyList()
-            },
+            } else null,
             // 3. ThePirateBay (Apibay)
-            async {
-                val epCode = "S%02dE%02d".format(season, episode)
-                val cleanTitle = showTitle.replace(Regex("[^a-zA-Z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
+            if (on(TorrentSourceRegistry.PIRATE_BAY)) async {
                 fetchPirateBayTorrents("$cleanTitle $epCode", isMovie = false, season, episode)
-            }
+            } else null,
+            // 4. SolidTorrents DHT index
+            if (on(TorrentSourceRegistry.SOLID_TORRENTS)) async {
+                fetchSolidTorrents("$cleanTitle $epCode", season, episode)
+            } else null,
+            // 5. Nyaa RSS
+            if (on(TorrentSourceRegistry.NYAA)) async {
+                fetchNyaaTorrents("$cleanTitle $epCode", season, episode)
+            } else null,
+            // 6. AnimeTosho JSON feed
+            if (on(TorrentSourceRegistry.ANIME_TOSHO)) async {
+                fetchAnimeToshoTorrents("$cleanTitle $epCode", season, episode)
+            } else null
         )
 
         withTimeoutOrNull(9000) {
@@ -181,8 +218,7 @@ object TorrentIndexerService {
 
             for (i in 0 until streams.length().coerceAtMost(15)) {
                 val s = streams.getJSONObject(i)
-                val hash = s.optString("infoHash").trim()
-                if (hash.isBlank()) continue
+                val hash = MagnetParser.normalizeInfoHash(s.optString("infoHash")) ?: continue
 
                 val rawTitle = s.optString("title", "")
                 val streamName = s.optString("name", "Torrentio")
@@ -210,7 +246,7 @@ object TorrentIndexerService {
                 list.add(
                     TorrentSource(
                         title = cleanTitle,
-                        infoHash = hash.lowercase(),
+                        infoHash = hash,
                         magnetUri = magnetUri,
                         quality = quality,
                         releaseType = releaseType,
@@ -218,7 +254,9 @@ object TorrentIndexerService {
                         sizeDisplay = sizeStr,
                         seeders = seeders,
                         leechers = (seeders * 0.2).toInt().coerceAtLeast(1),
-                        provider = provider
+                        provider = provider,
+                        indexerId = TorrentSourceRegistry.TORRENTIO,
+                        isVerified = true
                     )
                 )
             }
@@ -251,8 +289,7 @@ object TorrentIndexerService {
 
             for (i in 0 until streams.length().coerceAtMost(15)) {
                 val s = streams.getJSONObject(i)
-                val hash = s.optString("infoHash").trim()
-                if (hash.isBlank()) continue
+                val hash = MagnetParser.normalizeInfoHash(s.optString("infoHash")) ?: continue
 
                 val rawTitle = s.optString("title", "")
                 val streamName = s.optString("name", "Torrentio")
@@ -277,7 +314,7 @@ object TorrentIndexerService {
                 list.add(
                     TorrentSource(
                         title = cleanTitle,
-                        infoHash = hash.lowercase(),
+                        infoHash = hash,
                         magnetUri = magnetUri,
                         quality = quality,
                         releaseType = releaseType,
@@ -287,7 +324,9 @@ object TorrentIndexerService {
                         leechers = (seeders * 0.15).toInt().coerceAtLeast(1),
                         provider = provider,
                         season = season,
-                        episode = episode
+                        episode = episode,
+                        indexerId = TorrentSourceRegistry.TORRENTIO,
+                        isVerified = true
                     )
                 )
             }
@@ -297,73 +336,21 @@ object TorrentIndexerService {
         return list
     }
 
-    /**
-     * SolidTorrents API
-     */
-    private fun fetchSolidTorrents(
-        query: String,
-        season: Int? = null,
-        episode: Int? = null
-    ): List<TorrentSource> {
-        val list = mutableListOf<TorrentSource>()
-        try {
-            val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
-            val url = "https://solidtorrents.to/api/v1/search?sort=seeders&q=$encoded"
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "Mozilla/5.0")
-                .build()
-
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) return emptyList()
-            val body = response.body?.string() ?: return emptyList()
-            val json = JSONObject(body)
-            val results = json.optJSONArray("results") ?: return emptyList()
-
-            for (i in 0 until results.length().coerceAtMost(8)) {
-                val item = results.getJSONObject(i)
-                val title = item.optString("title", "Release")
-                val hash = item.optString("infoHash", "").trim()
-                val magnet = item.optString("magnet", "")
-                if (hash.isBlank() && magnet.isBlank()) continue
-
-                val swarm = item.optJSONObject("swarm")
-                val seeds = swarm?.optInt("seeders", 0) ?: 0
-                val leeches = swarm?.optInt("leechers", 0) ?: 0
-                val sizeBytes = item.optLong("size", 0L)
-
-                val finalHash = if (hash.isNotBlank()) hash else extractHashFromMagnet(magnet)
-                val quality = detectQuality(title)
-                val releaseType = detectReleaseType(title)
-
-                list.add(
-                    TorrentSource(
-                        title = title,
-                        infoHash = finalHash.lowercase(),
-                        magnetUri = if (magnet.isNotBlank()) magnet else "magnet:?xt=urn:btih:$finalHash&dn=${URLEncoder.encode(title, StandardCharsets.UTF_8.name())}$TRACKER_LIST",
-                        quality = quality,
-                        releaseType = releaseType,
-                        sizeBytes = sizeBytes,
-                        sizeDisplay = formatBytes(sizeBytes),
-                        seeders = seeds,
-                        leechers = leeches,
-                        provider = "SolidTorrents",
-                        season = season,
-                        episode = episode
-                    )
-                )
-            }
-        } catch (e: Exception) {
-            // ignore
-        }
-        return list
-    }
+    private val YTS_MIRRORS = listOf("https://yts.mx", "https://yts.am")
 
     private fun fetchYtsTorrents(queryTerm: String, movieTitle: String): List<TorrentSource> {
+        for (mirror in YTS_MIRRORS) {
+            val found = fetchYtsFromMirror(mirror, queryTerm, movieTitle)
+            if (found.isNotEmpty()) return found
+        }
+        return emptyList()
+    }
+
+    private fun fetchYtsFromMirror(mirror: String, queryTerm: String, movieTitle: String): List<TorrentSource> {
         val list = mutableListOf<TorrentSource>()
         try {
             val encodedQuery = URLEncoder.encode(queryTerm, StandardCharsets.UTF_8.name())
-            val url = "https://yts.mx/api/v2/list_movies.json?query_term=$encodedQuery&limit=5"
+            val url = "$mirror/api/v2/list_movies.json?query_term=$encodedQuery&limit=5"
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
@@ -384,8 +371,7 @@ object TorrentIndexerService {
 
                 for (j in 0 until torrents.length()) {
                     val t = torrents.getJSONObject(j)
-                    val hash = t.optString("hash").trim()
-                    if (hash.isBlank()) continue
+                    val hash = MagnetParser.normalizeInfoHash(t.optString("hash")) ?: continue
 
                     val quality = t.optString("quality", "1080p")
                     val type = t.optString("type", "BluRay").replaceFirstChar { it.uppercase() }
@@ -396,12 +382,12 @@ object TorrentIndexerService {
 
                     val encodedTitle = URLEncoder.encode("$movieTitle [$quality] [YTS]", StandardCharsets.UTF_8.name())
                     val magnetUri = "magnet:?xt=urn:btih:$hash&dn=$encodedTitle$TRACKER_LIST"
-                    val torrentUrl = "https://yts.mx/torrent/download/$hash"
+                    val torrentUrl = "$mirror/torrent/download/$hash"
 
                     list.add(
                         TorrentSource(
                             title = "$movieTitle ($quality $type)",
-                            infoHash = hash.lowercase(),
+                            infoHash = hash,
                             magnetUri = magnetUri,
                             torrentFileUrl = torrentUrl,
                             quality = quality,
@@ -410,13 +396,15 @@ object TorrentIndexerService {
                             sizeDisplay = sizeStr,
                             seeders = seeds,
                             leechers = peers,
-                            provider = "YTS"
+                            provider = "YTS",
+                            indexerId = TorrentSourceRegistry.YTS,
+                            isVerified = true
                         )
                     )
                 }
             }
         } catch (e: Exception) {
-            // ignore
+            // ignore — caller tries the next mirror
         }
         return list
     }
@@ -448,8 +436,7 @@ object TorrentIndexerService {
                 if (id == "0" || id.isBlank()) continue
 
                 val name = item.optString("name", "Torrent")
-                val hash = item.optString("info_hash", "").trim()
-                if (hash.isBlank()) continue
+                val hash = MagnetParser.normalizeInfoHash(item.optString("info_hash", "")) ?: continue
 
                 val seeds = item.optString("seeders", "0").toIntOrNull() ?: 0
                 val leeches = item.optString("leechers", "0").toIntOrNull() ?: 0
@@ -463,7 +450,7 @@ object TorrentIndexerService {
                 list.add(
                     TorrentSource(
                         title = name,
-                        infoHash = hash.lowercase(),
+                        infoHash = hash,
                         magnetUri = magnetUri,
                         quality = quality,
                         releaseType = releaseType,
@@ -473,7 +460,9 @@ object TorrentIndexerService {
                         leechers = leeches,
                         provider = "ThePirateBay",
                         season = season,
-                        episode = episode
+                        episode = episode,
+                        indexerId = TorrentSourceRegistry.PIRATE_BAY,
+                        isVerified = true
                     )
                 )
             }
@@ -504,9 +493,9 @@ object TorrentIndexerService {
 
             for (i in 0 until torrents.length()) {
                 val t = torrents.getJSONObject(i)
-                val hash = t.optString("hash", "").trim()
                 val magnet = t.optString("magnet_url", "")
-                if (hash.isBlank() && magnet.isBlank()) continue
+                val rawHash = t.optString("hash", "").trim().ifBlank { extractHashFromMagnet(magnet) }
+                val hash = MagnetParser.normalizeInfoHash(rawHash) ?: continue
 
                 val tSeason = t.optString("season").toIntOrNull()
                 val tEpisode = t.optString("episode").toIntOrNull()
@@ -520,14 +509,13 @@ object TorrentIndexerService {
                 val sizeBytes = t.optLong("size_bytes", 0L)
                 val torrentUrl = t.optString("torrent_url").takeIf { it.isNotBlank() }
 
-                val finalHash = if (hash.isNotBlank()) hash else extractHashFromMagnet(magnet)
                 val quality = detectQuality(filename)
 
                 list.add(
                     TorrentSource(
                         title = filename,
-                        infoHash = finalHash.lowercase(),
-                        magnetUri = magnet.ifBlank { "magnet:?xt=urn:btih:$finalHash$TRACKER_LIST" },
+                        infoHash = hash,
+                        magnetUri = magnet.ifBlank { "magnet:?xt=urn:btih:$hash$TRACKER_LIST" },
                         torrentFileUrl = torrentUrl,
                         quality = quality,
                         releaseType = detectReleaseType(filename),
@@ -537,7 +525,9 @@ object TorrentIndexerService {
                         leechers = peers,
                         provider = "EZTV",
                         season = tSeason,
-                        episode = tEpisode
+                        episode = tEpisode,
+                        indexerId = TorrentSourceRegistry.EZTV,
+                        isVerified = true
                     )
                 )
             }
@@ -549,13 +539,372 @@ object TorrentIndexerService {
 
 
 
+    // ------------------------------------------------------------------
+    // New verified indexers (see TorrentSourceRegistry)
+    // ------------------------------------------------------------------
+
+    /**
+     * SolidTorrents DHT index — public JSON API, no key required.
+     * Pure parsing lives in [parseSolidTorrentsBody] so it stays unit-testable.
+     */
+    fun fetchSolidTorrents(
+        query: String,
+        season: Int? = null,
+        episode: Int? = null
+    ): List<TorrentSource> {
+        return try {
+            val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
+            val url = "https://solidtorrents.to/api/v1/search/$encoded"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .build()
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) return emptyList()
+            val body = response.body?.string() ?: return emptyList()
+            parseSolidTorrentsBody(body, season, episode)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun parseSolidTorrentsBody(
+        body: String,
+        season: Int? = null,
+        episode: Int? = null
+    ): List<TorrentSource> {
+        val list = mutableListOf<TorrentSource>()
+        try {
+            val root = JSONObject(body)
+            val results = root.optJSONArray("results")
+                ?: root.optJSONArray("torrents")
+                ?: return emptyList()
+            for (i in 0 until results.length().coerceAtMost(10)) {
+                val item = results.optJSONObject(i) ?: continue
+                val title = item.optString("title").ifBlank { item.optString("name", "Torrent") }
+                val magnet = item.optString("magnet").ifBlank { item.optString("magnet_uri", "") }
+                    .ifBlank { item.optString("magnetLink", "") }
+                val rawHash = item.optString("infohash", "").ifBlank { item.optString("info_hash", "") }
+                    .ifBlank { item.optString("hash", "") }
+                    .ifBlank { extractHashFromMagnet(magnet) }
+                val hash = MagnetParser.normalizeInfoHash(rawHash) ?: continue
+
+                val seeders = item.optInt("seeders", -1).takeIf { it >= 0 }
+                    ?: item.optString("seeders", "0").toIntOrNull()
+                    ?: item.optInt("seeds", 0)
+                val leechers = item.optInt("leechers", -1).takeIf { it >= 0 }
+                    ?: item.optString("leechers", "0").toIntOrNull()
+                    ?: item.optInt("peers", 0)
+                val sizeBytes = item.optLong("size", -1L).takeIf { it >= 0 }
+                    ?: item.optString("size", "0").toLongOrNull()
+                    ?: parseSizeToBytes(item.optString("size", "0"))
+
+                val quality = detectQuality(title)
+                val encodedName = URLEncoder.encode(title, StandardCharsets.UTF_8.name())
+                val magnetUri = magnet.ifBlank { "magnet:?xt=urn:btih:$hash&dn=$encodedName$TRACKER_LIST" }
+                list.add(
+                    TorrentSource(
+                        title = title,
+                        infoHash = hash,
+                        magnetUri = magnetUri,
+                        quality = quality,
+                        releaseType = detectReleaseType(title),
+                        sizeBytes = sizeBytes,
+                        sizeDisplay = formatBytes(sizeBytes),
+                        seeders = seeders,
+                        leechers = leechers,
+                        provider = "SolidTorrents",
+                        season = season,
+                        episode = episode,
+                        indexerId = TorrentSourceRegistry.SOLID_TORRENTS,
+                        isVerified = true
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            // ignore malformed payloads
+        }
+        return list
+    }
+
+    /**
+     * Nyaa.si public RSS feed — the long-lived verified indexer for anime
+     * and a useful extra swarm for general titles. Pure parsing lives in
+     * [parseNyaaRss] so it stays unit-testable without network.
+     */
+    fun fetchNyaaTorrents(
+        query: String,
+        season: Int? = null,
+        episode: Int? = null
+    ): List<TorrentSource> {
+        return try {
+            val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
+            val url = "https://nyaa.si/?page=rss&q=$encoded&c=0_0&f=0"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .build()
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) return emptyList()
+            val body = response.body?.string() ?: return emptyList()
+            parseNyaaRss(body, season, episode)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun parseNyaaRss(
+        xml: String,
+        season: Int? = null,
+        episode: Int? = null
+    ): List<TorrentSource> {
+        val list = mutableListOf<TorrentSource>()
+        try {
+            val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+            factory.isNamespaceAware = false
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            val doc = factory.newDocumentBuilder().parse(xml.byteInputStream())
+            val items = doc.getElementsByTagName("item")
+            for (i in 0 until items.length.coerceAtMost(10)) {
+                val node = items.item(i) ?: continue
+                val children = node.childNodes
+                var title = ""
+                var link = ""
+                var hash = ""
+                var sizeStr = ""
+                var seeders = 0
+                var leechers = 0
+                for (j in 0 until children.length) {
+                    val child = children.item(j) ?: continue
+                    when (child.nodeName.substringAfter(":").lowercase()) {
+                        "title" -> title = child.textContent?.trim().orEmpty()
+                        "link" -> link = child.textContent?.trim().orEmpty()
+                        "infohash" -> hash = child.textContent?.trim().orEmpty()
+                        "size" -> sizeStr = child.textContent?.trim().orEmpty()
+                        "seeders" -> seeders = child.textContent?.trim()?.toIntOrNull() ?: 0
+                        "leechers" -> leechers = child.textContent?.trim()?.toIntOrNull() ?: 0
+                    }
+                }
+                val infoHash = MagnetParser.normalizeInfoHash(hash) ?: continue
+                if (title.isBlank()) title = "Nyaa $infoHash"
+                val sizeBytes = parseSizeToBytes(sizeStr)
+                val encodedName = URLEncoder.encode(title, StandardCharsets.UTF_8.name())
+                list.add(
+                    TorrentSource(
+                        title = title,
+                        infoHash = infoHash,
+                        magnetUri = "magnet:?xt=urn:btih:$infoHash&dn=$encodedName$TRACKER_LIST",
+                        torrentFileUrl = link.takeIf { it.startsWith("http", ignoreCase = true) },
+                        quality = detectQuality(title),
+                        releaseType = detectReleaseType(title),
+                        sizeBytes = sizeBytes,
+                        sizeDisplay = if (sizeStr.isBlank()) formatBytes(sizeBytes) else sizeStr,
+                        seeders = seeders,
+                        leechers = leechers,
+                        provider = "Nyaa",
+                        season = season,
+                        episode = episode,
+                        indexerId = TorrentSourceRegistry.NYAA,
+                        isVerified = true
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            // ignore malformed feeds
+        }
+        return list
+    }
+
+    /**
+     * AnimeTosho public JSON feed. Schema is read defensively (multiple
+     * field aliases) so feed-side renames degrade to empty results instead
+     * of crashes. Pure parsing lives in [parseAnimeToshoBody].
+     */
+    fun fetchAnimeToshoTorrents(
+        query: String,
+        season: Int? = null,
+        episode: Int? = null
+    ): List<TorrentSource> {
+        return try {
+            val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
+            val url = "https://feed.animetosho.org/json?qx=1&q=$encoded"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .build()
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) return emptyList()
+            val body = response.body?.string() ?: return emptyList()
+            parseAnimeToshoBody(body, season, episode)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun parseAnimeToshoBody(
+        body: String,
+        season: Int? = null,
+        episode: Int? = null
+    ): List<TorrentSource> {
+        val list = mutableListOf<TorrentSource>()
+        try {
+            val trimmed = body.trim()
+            val array = when {
+                trimmed.startsWith("[") -> JSONArray(trimmed)
+                else -> JSONObject(trimmed).let {
+                    it.optJSONArray("results")
+                        ?: it.optJSONArray("torrents")
+                        ?: it.optJSONArray("items")
+                        ?: return emptyList()
+                }
+            }
+            for (i in 0 until array.length().coerceAtMost(10)) {
+                val item = array.optJSONObject(i) ?: continue
+                val title = item.optString("title").ifBlank { item.optString("name", "Torrent") }
+                val magnet = item.optString("link_magnet").ifBlank { item.optString("magnet", "") }
+                    .ifBlank { item.optString("magnet_uri", "") }
+                    .ifBlank { item.optString("magnetLink", "") }
+                val torrentUrl = item.optString("torrent_url").ifBlank { item.optString("torrent_link", "") }
+                    .ifBlank { item.optString("link", "") }
+                    .takeIf { it.startsWith("http", ignoreCase = true) }
+                val rawHash = item.optString("info_hash").ifBlank { item.optString("infohash", "") }
+                    .ifBlank { item.optString("hash", "") }
+                    .ifBlank { extractHashFromMagnet(magnet) }
+                val hash = MagnetParser.normalizeInfoHash(rawHash) ?: continue
+                val seeders = item.optInt("seeders", -1).takeIf { it >= 0 }
+                    ?: item.optString("seeders", "0").toIntOrNull()
+                    ?: item.optInt("seeds", 0)
+                val sizeRaw = item.opt("size")
+                val sizeBytes = when (sizeRaw) {
+                    is Number -> sizeRaw.toLong().coerceAtLeast(0L)
+                    is String -> if (sizeRaw.any { it.isDigit() } && sizeRaw.all { it.isDigit() || it == '.' }) {
+                        sizeRaw.toLongOrNull() ?: parseSizeToBytes(sizeRaw)
+                    } else parseSizeToBytes(sizeRaw)
+                    else -> 0L
+                }
+                val quality = detectQuality(title)
+                val encodedName = URLEncoder.encode(title, StandardCharsets.UTF_8.name())
+                list.add(
+                    TorrentSource(
+                        title = title,
+                        infoHash = hash,
+                        magnetUri = magnet.ifBlank { "magnet:?xt=urn:btih:$hash&dn=$encodedName$TRACKER_LIST" },
+                        torrentFileUrl = torrentUrl,
+                        quality = quality,
+                        releaseType = detectReleaseType(title),
+                        sizeBytes = sizeBytes,
+                        sizeDisplay = formatBytes(sizeBytes),
+                        seeders = seeders,
+                        leechers = item.optInt("leechers", 0),
+                        provider = "AnimeTosho",
+                        season = season,
+                        episode = episode,
+                        indexerId = TorrentSourceRegistry.ANIME_TOSHO,
+                        isVerified = true
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            // ignore malformed payloads
+        }
+        return list
+    }
+
+    /** Keeps only results from registry-verified indexers/providers. */
+    fun filterVerified(sources: List<TorrentSource>): List<TorrentSource> =
+        sources.filter { it.isVerified || TorrentSourceRegistry.isVerifiedProvider(it.provider) }
+
+    /**
+     * Canonical resolution bucket used for quality-aware filtering.
+     * Accepts both torrent labels ("2160p (4K)", "1080p", "BluRay") and UI
+     * labels ("1080p Full HD", "720p HD", "480p SD", "360p Data Saver").
+     */
+    fun normalizeQuality(quality: String): String {
+        val lower = quality.lowercase()
+        return when {
+            lower.contains("2160") || lower.contains("4k") || lower.contains("uhd") -> "2160p"
+            lower.contains("1080") || lower.contains("fhd") || lower.contains("full hd") -> "1080p"
+            lower.contains("720") -> "720p"
+            // Bare "hd"/"hdtv" without a number historically means 720p.
+            lower.contains("480") -> "480p"
+            lower.contains("360") -> "360p"
+            lower.contains("hdtv") || lower == "hd" || lower.contains(" 720p ") -> "720p"
+            else -> "unknown"
+        }
+    }
+
+    /**
+     * Returns only sources matching the requested resolution. Empty means no
+     * exact match exists (caller decides whether to fall back).
+     */
+    fun filterByQuality(sources: List<TorrentSource>, requestedQuality: String): List<TorrentSource> {
+        val want = normalizeQuality(requestedQuality)
+        if (want == "unknown") return sources
+        return sources.filter { normalizeQuality(it.quality) == want }
+    }
+
+    /**
+     * Highest-seed source for the requested resolution, or null when no exact
+     * match exists. Never silently substitutes a different resolution.
+     */
+    fun selectBestForQuality(sources: List<TorrentSource>, requestedQuality: String): TorrentSource? {
+        return filterByQuality(sources, requestedQuality).maxByOrNull { it.seeders }
+    }
+
+    /** Resolution ladder, lowest to highest, for stepwise fallback. */
+    val QUALITY_LADDER = listOf("360p", "480p", "720p", "1080p", "2160p")
+
+    data class QualityPick(
+        val source: TorrentSource,
+        val matchedQuality: String,
+        val isExactMatch: Boolean
+    )
+
+    /**
+     * Picks the highest-seed torrent for the requested resolution, stepping UP
+     * to the next resolution when none exists (360p -> 480p -> 720p -> ...),
+     * then stepping DOWN as a last resort — so a download is queued whenever
+     * any torrent exists at all. Returns null only when [sources] is empty.
+     */
+    fun selectBestWithFallback(sources: List<TorrentSource>, requestedQuality: String): QualityPick? {
+        if (sources.isEmpty()) return null
+        val want = normalizeQuality(requestedQuality)
+        val startIndex = QUALITY_LADDER.indexOf(want)
+        if (startIndex == -1) {
+            val best = sources.maxByOrNull { it.seeders } ?: return null
+            return QualityPick(best, normalizeQuality(best.quality), false)
+        }
+        // 1. Exact match, then upward (360p -> 480p -> 720p -> ...).
+        for (i in startIndex until QUALITY_LADDER.size) {
+            val q = QUALITY_LADDER[i]
+            val best = sources.filter { normalizeQuality(it.quality) == q }.maxByOrNull { it.seeders }
+            if (best != null) return QualityPick(best, q, i == startIndex)
+        }
+        // 2. Downward last resort so the download never fails outright.
+        for (i in startIndex - 1 downTo 0) {
+            val q = QUALITY_LADDER[i]
+            val best = sources.filter { normalizeQuality(it.quality) == q }.maxByOrNull { it.seeders }
+            if (best != null) return QualityPick(best, q, false)
+        }
+        // 3. Anything with an unrecognized quality label.
+        val best = sources.maxByOrNull { it.seeders } ?: return null
+        return QualityPick(best, normalizeQuality(best.quality), false)
+    }
+
     private fun detectQuality(title: String): String {
         val lower = title.lowercase()
+        // Order matters: check numbered resolutions before bare tags so
+        // "1080p WEB-DL" is not misclassified via the "web"/"hd" substrings.
+        // Word-boundary regex avoids "hd" matching inside unrelated words.
+        val hdWord = Regex("\\bhd\\b|\\bhdtv\\b")
         return when {
-            lower.contains("2160p") || lower.contains("4k") || lower.contains("uhd") -> "2160p (4K)"
-            lower.contains("1080p") || lower.contains("fhd") -> "1080p"
-            lower.contains("720p") || lower.contains("hd") -> "720p"
-            lower.contains("480p") || lower.contains("sd") -> "480p"
+            lower.contains("2160p") || lower.contains("2160i") || lower.contains("4k") || lower.contains("uhd") -> "2160p (4K)"
+            lower.contains("1080p") || lower.contains("1080i") || lower.contains("fhd") || lower.contains("full hd") -> "1080p"
+            lower.contains("720p") || lower.contains("720i") -> "720p"
+            lower.contains("480p") || lower.contains("480i") -> "480p"
+            lower.contains("360p") || lower.contains("360i") -> "360p"
+            hdWord.containsMatchIn(lower) -> "720p"
+            lower.contains(" dvd") || lower.contains("dvdrip") || lower.contains(" sd") || lower == "sd" -> "480p"
             else -> "1080p"
         }
     }

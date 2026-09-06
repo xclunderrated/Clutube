@@ -1,18 +1,28 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BrokenImage
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.util.ImagePreset
@@ -33,6 +43,7 @@ fun FittedMediaThumbnail(
     isPosterRatio: Boolean = false,
     imagePreset: ImagePreset = ImagePreset.THUMBNAIL,
     isWatched: Boolean = false,
+    dimAlpha: Float? = null,
     shape: Shape = RoundedCornerShape(12.dp),
     overlayContent: @Composable (BoxScope.() -> Unit)? = null
 ) {
@@ -58,8 +69,15 @@ fun FittedMediaThumbnail(
     val (thumbnailRequest, onThumbnailError) = rememberThumbnailRequestWithFallback(
         primaryUrl = primaryArtwork,
         fallbackUrl = fallbackArtwork,
-        preset = effectivePreset
+        preset = effectivePreset,
+        crossfade = true
     )
+    var loadFailed by remember(primaryArtwork, fallbackArtwork) { mutableStateOf(false) }
+    var errorCount by remember(primaryArtwork, fallbackArtwork) { mutableStateOf(0) }
+    val targetAlpha = dimAlpha ?: if (isWatched) 0.52f else 1f
+    val animatedAlpha by animateFloatAsState(targetValue = targetAlpha, label = "thumb_dim")
+
+    val hasArtwork = !primaryArtwork.isNullOrBlank() || !fallbackArtwork.isNullOrBlank()
 
     Box(
         modifier = modifier
@@ -67,18 +85,42 @@ fun FittedMediaThumbnail(
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
         contentAlignment = Alignment.Center
     ) {
-        // Image fills 100% of the container with zero letterboxing, side pillars, or black bars.
-        AsyncImage(
-            model = thumbnailRequest,
-            contentDescription = contentDescription,
-            contentScale = ContentScale.Crop,
-            onError = { onThumbnailError() },
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    alpha = if (isWatched) 0.52f else 1f
-                }
-        )
+        if (!hasArtwork || loadFailed) {
+            // Themed empty/error state instead of a permanent grey box.
+            Icon(
+                imageVector = Icons.Default.BrokenImage,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .size(28.dp)
+                    .clearAndSetSemantics { }
+            )
+        } else {
+            // Image fills 100% of the container with zero letterboxing, side pillars, or black bars.
+            AsyncImage(
+                model = thumbnailRequest,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Crop,
+                onError = {
+                    errorCount += 1
+                    // First failure tries the fallback; second failure shows broken-image.
+                    onThumbnailError()
+                    if (errorCount >= 2 || fallbackArtwork.isNullOrBlank() || fallbackArtwork == primaryArtwork) {
+                        // If there is no usable fallback, fail immediately, otherwise
+                        // fail only after the fallback also errors.
+                        if (fallbackArtwork.isNullOrBlank() || fallbackArtwork == primaryArtwork || errorCount >= 2) {
+                            loadFailed = true
+                        }
+                    }
+                },
+                onSuccess = { loadFailed = false },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        alpha = animatedAlpha
+                    }
+            )
+        }
 
         // Overlays (duration badge, watched pill, progress bar, etc.)
         if (overlayContent != null) {

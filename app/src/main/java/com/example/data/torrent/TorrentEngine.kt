@@ -103,14 +103,20 @@ object TorrentEngine {
                 runCatching { TorrentInfo(metaBytes) }.getOrNull()
             } else null
 
-            val handle: TorrentHandle? = if (torrentInfo != null) {
-                sm.download(torrentInfo, savePath)
-                sm.find(torrentInfo.infoHash())
-            } else {
-                // If fetchMagnet metadata times out, initiate download directly via magnet URI
-                sm.download(magnetUri, savePath, TorrentFlags.SEQUENTIAL_DOWNLOAD)
-                if (infoHash != null) sm.find(infoHash) else null
-            }
+            // A previous failed attempt leaves its handle in the session, so a
+            // re-add can throw "duplicate torrent". Fall back to reusing the
+            // existing handle so retry-after-failure keeps working.
+            val handle: TorrentHandle? = runCatching {
+                if (torrentInfo != null) {
+                    sm.download(torrentInfo, savePath)
+                    sm.find(torrentInfo.infoHash())
+                } else {
+                    // If fetchMagnet metadata times out, initiate download directly via magnet URI
+                    sm.download(magnetUri, savePath, TorrentFlags.SEQUENTIAL_DOWNLOAD)
+                    if (infoHash != null) sm.find(infoHash) else null
+                }
+            }.getOrNull()
+                ?: infoHash?.let { runCatching { sm.find(it) }.getOrNull() }?.takeIf { it.isValid() }
 
             if (handle == null || !handle.isValid()) {
                 Log.e(TAG, "Failed to get valid TorrentHandle for magnet: $magnetUri")
@@ -147,8 +153,13 @@ object TorrentEngine {
                 return@withContext null
             }
 
-            sm.download(torrentInfo, savePath)
-            val handle = sm.find(torrentInfo.infoHash())
+            // Same duplicate-handle reuse as the magnet path: a failed attempt
+            // stays in the session, so retry must reuse instead of re-add.
+            val handle = runCatching {
+                sm.download(torrentInfo, savePath)
+                sm.find(torrentInfo.infoHash())
+            }.getOrNull()
+                ?: runCatching { sm.find(torrentInfo.infoHash()) }.getOrNull()?.takeIf { it.isValid() }
             if (handle == null || !handle.isValid()) {
                 Log.e(TAG, "Failed to get valid TorrentHandle for torrent file")
                 return@withContext null
@@ -168,6 +179,9 @@ object TorrentEngine {
         savePath: File,
         onProgress: (TorrentProgress) -> Unit
     ): File? = withContext(Dispatchers.IO) {
+        // A reused handle (retry path) may still be paused from a previous
+        // pause/cancel; resume is idempotent on a running handle.
+        runCatching { handle.resume() }
         // Wait for metadata if handle doesn't have it yet
         var ti = handle.torrentFile()
         var waitSeconds = 0
@@ -183,10 +197,17 @@ object TorrentEngine {
         }
 
         val videoExtensions = setOf("mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "ts")
+        // L0 offline subtitles: small subtitle siblings ride along with the
+        // video payload. Same release = same timing, so these are perfectly
+        // synced with zero network/quota cost. Oversized files are skipped
+        // (likely mislabeled packs, not cues).
+        val subtitleExtensions = setOf("srt", "vtt", "ass", "ssa", "sub", "smi")
+        val maxSiblingSubtitleBytes = 5L * 1024L * 1024L
         var maxFileIndex = -1
         var maxSize = -1L
         var videoFileName: String? = null
         var videoFilePath: String? = null
+        var siblingSubtitleCount = 0
 
         val fileStorage = ti.files()
         val numFiles = ti.numFiles()
@@ -203,13 +224,18 @@ object TorrentEngine {
                 maxFileIndex = i
                 videoFileName = File(path).name
                 videoFilePath = path
+            } else if (ext in subtitleExtensions && size > 0 && size <= maxSiblingSubtitleBytes) {
+                // Download alongside the video; DownloadManager collects these
+                // from the staging dir after the video payload finalizes.
+                handle.filePriority(i, Priority.DEFAULT)
+                siblingSubtitleCount++
             }
         }
 
         if (maxFileIndex != -1) {
             handle.filePriority(maxFileIndex, Priority.TOP_PRIORITY)
             handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
-            Log.i(TAG, "Prioritizing video payload: $videoFileName ($maxSize bytes, index $maxFileIndex)")
+            Log.i(TAG, "Prioritizing video payload: $videoFileName ($maxSize bytes, index $maxFileIndex) + $siblingSubtitleCount subtitle siblings")
         } else {
             // If no recognized video extension, download all files
             for (i in 0 until numFiles) {
@@ -217,17 +243,33 @@ object TorrentEngine {
             }
         }
 
-        // Active download monitoring loop
+        // Active download monitoring loop.
+        // Uses totalWantedDone/totalWanted (wanted-piece accounting) instead of
+        // totalDone (all-piece accounting) so progress can actually reach 1.0
+        // when only the largest video file is prioritized.
+        // NOTE: on-disk File.length() is deliberately NOT used for progress or
+        // completion — libtorrent pre-sizes sparse files to their full logical
+        // length, so an empty file already reports "full size" and would fake
+        // an instant 100%. Only libtorrent's verified piece accounting counts.
+        val loopStartMs = System.currentTimeMillis()
+        var lastBytes = -1L
+        var lastProgressMs = loopStartMs
         while (currentCoroutineContext().isActive) {
             val status = handle.status()
             val state = mapState(status.state())
             val downloadSpeed = status.downloadRate().toLong()
-            val totalBytes = status.totalWanted().takeIf { it > 0 } ?: maxSize.coerceAtLeast(1L)
-            val bytesDownloaded = status.totalDone()
-            val progress = if (totalBytes > 0) {
-                (bytesDownloaded.toFloat() / totalBytes).coerceIn(0f, 1f)
-            } else {
-                status.progress()
+            val wanted = status.totalWanted().takeIf { it > 0 } ?: maxSize.coerceAtLeast(1L)
+            val wantedDone = runCatching { status.totalWantedDone() }.getOrDefault(status.totalDone())
+            val libProgress = status.progress().coerceIn(0f, 1f)
+            val totalBytes = wanted.coerceAtLeast(1L)
+
+            val bytesDownloaded = maxOf(wantedDone, (libProgress * totalBytes).toLong())
+                .coerceIn(0L, totalBytes)
+            val progress = (bytesDownloaded.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+
+            if (bytesDownloaded != lastBytes) {
+                lastBytes = bytesDownloaded
+                lastProgressMs = System.currentTimeMillis()
             }
 
             val remainingBytes = (totalBytes - bytesDownloaded).coerceAtLeast(0L)
@@ -250,8 +292,16 @@ object TorrentEngine {
 
             onProgress(tp)
 
-            if (state == TorrentState.FINISHED || state == TorrentState.SEEDING || (bytesDownloaded >= totalBytes && totalBytes > 0)) {
-                Log.i(TAG, "Torrent payload download finished for $downloadId ($bytesDownloaded bytes)")
+            val finished = runCatching { status.isFinished() }.getOrDefault(false)
+            val seeding = runCatching { status.isSeeding() }.getOrDefault(false)
+            val bytesComplete = bytesDownloaded >= totalBytes && totalBytes > 0
+
+            if (state == TorrentState.FINISHED || state == TorrentState.SEEDING ||
+                finished || seeding || bytesComplete
+            ) {
+                Log.i(TAG, "Torrent payload download finished for $downloadId ($bytesDownloaded/$totalBytes bytes)")
+                // Emit a final 100% callback so the UI never sticks at 99%.
+                onProgress(tp.copy(bytesDownloaded = totalBytes, progress = 1f, state = TorrentState.FINISHED, eta = 0L))
                 break
             }
             if (state == TorrentState.ERROR) {
@@ -259,16 +309,72 @@ object TorrentEngine {
                 return@withContext null
             }
 
+            // Stall guards: fail fast with a retryable FAILED instead of
+            // hanging at 99% forever. Partial files stay on disk, so a retry
+            // rechecks hashes and resumes instead of starting over.
+            val stalledMs = System.currentTimeMillis() - lastProgressMs
+            if (stalledMs > 10L * 60L * 1000L && status.numPeers() == 0 && status.numSeeds() == 0) {
+                Log.e(TAG, "Torrent stalled with no peers for 10min: $downloadId")
+                return@withContext null
+            }
+            if (stalledMs > 30L * 60L * 1000L) {
+                Log.e(TAG, "Torrent made zero progress for 30min ($bytesDownloaded/$totalBytes): $downloadId")
+                return@withContext null
+            }
+
             delay(1000L)
         }
 
-        val downloadedFile = if (videoFilePath != null) {
-            File(savePath, videoFilePath)
-        } else {
-            File(savePath, ti.name())
-        }
+        val downloadedFile = locateVideoFile(savePath, ti, videoFilePath)
 
+        if (downloadedFile == null || !downloadedFile.exists() || downloadedFile.length() <= 0L) {
+            Log.e(TAG, "Torrent finished but video file missing for $downloadId")
+            return@withContext null
+        }
         return@withContext downloadedFile
+    }
+
+    /**
+     * Resolves the downloaded video file on disk. libtorrent saves under
+     * savePath/<torrentName>/<filePath>, but filePath() already embeds the
+     * torrent root for multi-file torrents, so the direct join usually works.
+     * Falls back to a disk scan for the largest playable video file inside the
+     * torrent's folder so renames / nested folders can't yield a dangling path.
+     */
+    private fun locateVideoFile(savePath: File, ti: TorrentInfo, videoFilePath: String?): File? {
+        val videoExtensions = setOf("mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "ts")
+        if (!videoFilePath.isNullOrBlank()) {
+            val direct = File(savePath, videoFilePath)
+            if (direct.exists() && direct.length() > 0) return direct
+            // Some sessions nest one extra root folder level.
+            val byName = File(File(savePath, ti.name()), File(videoFilePath).name)
+            if (byName.exists() && byName.length() > 0) return byName
+        } else {
+            val single = File(savePath, ti.name())
+            if (single.isFile && single.exists() && single.length() > 0) return single
+        }
+        // Fallback: largest video file under the torrent root (or savePath).
+        val roots = listOf(File(savePath, ti.name()), savePath).filter { it.exists() }
+        var best: File? = null
+        var bestSize = -1L
+        for (root in roots) {
+            runCatching {
+                root.walkTopDown().maxDepth(4).filter { f ->
+                    f.isFile && f.length() > bestSize &&
+                        f.name.substringAfterLast('.', "").lowercase() in videoExtensions
+                }.forEach { f ->
+                    // Prefer files inside this torrent's folder when scanning savePath.
+                    val insideTorrent = f.absolutePath.contains(ti.name()) || root.name == ti.name()
+                    if (root.name == ti.name() || insideTorrent) {
+                        if (f.length() > bestSize) {
+                            bestSize = f.length()
+                            best = f
+                        }
+                    }
+                }
+            }
+        }
+        return best
     }
 
     private fun mapState(libtorrentState: TorrentStatus.State): TorrentState {

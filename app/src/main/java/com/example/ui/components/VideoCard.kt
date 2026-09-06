@@ -33,6 +33,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,20 +46,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.example.model.MediaType
 import com.example.model.VideoItem
 import com.example.model.isUnreleased
+import com.example.model.playbackKey
 import com.example.ui.theme.YTBlueVerified
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
-import com.example.util.rememberThumbnailRequestWithFallback
 
 private val ThumbnailShape = RoundedCornerShape(12.dp)
 private val BadgeShape = RoundedCornerShape(4.dp)
@@ -74,6 +77,9 @@ fun VideoCard(
     onDownload: (() -> Unit)? = null,
     onAddToQueue: (() -> Unit)? = null,
     isWatched: Boolean = false,
+    isSaved: Boolean = false,
+    progressFraction: Float? = null,
+    continueLabel: String? = null,
     onToggleWatched: (() -> Unit)? = null,
     onNotInterested: (() -> Unit)? = null,
     onNotRecommendChannel: (() -> Unit)? = null,
@@ -91,10 +97,33 @@ fun VideoCard(
         }
     }
 
+    val haptics = LocalHapticFeedback.current
+    val animatedDim by animateFloatAsState(
+        targetValue = if (isWatched) 0.52f else 1f,
+        label = "watched_dim"
+    )
+    // Unified badge text: TV shows show S:E, movies show duration, others show duration.
+    // Never render the literal "TV SERIES" as a duration badge.
+    val badgeText: String? = remember(video) {
+        if (video.mediaType == MediaType.TV_SHOW) {
+            "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}"
+        } else {
+            video.duration.takeUnless {
+                it.isBlank() || it.equals("TV SERIES", ignoreCase = true)
+            }
+        }
+    }
+    val isLive = video.duration == "LIVE"
+    val effectiveProgress = progressFraction?.takeIf { it > 0.01f && it < 0.99f }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(
+                onClick = onClick,
+                role = Role.Button,
+                onClickLabel = "Play ${video.title}"
+            )
             .padding(bottom = 16.dp)
             .testTag("video_card_${video.id}")
     ) {
@@ -112,7 +141,8 @@ fun VideoCard(
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.THUMBNAIL,
-            isWatched = isWatched,
+            isWatched = false,
+            dimAlpha = animatedDim,
             shape = ThumbnailShape
         ) {
             // Subtle gradient overlay at bottom
@@ -122,28 +152,8 @@ fun VideoCard(
                     .background(CardBottomGradient)
             )
 
-            // Duration Badge (bottom-right rounded pill). Unknown durations
-            // stay hidden instead of showing a fabricated value.
-            val cardDuration = video.duration.takeUnless { it.equals("TV SERIES", ignoreCase = true) }
-            if (!cardDuration.isNullOrBlank()) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp)
-                        .clip(BadgeShape)
-                        .background(if (video.duration == "LIVE") YouTubeRed else Color.Black.copy(alpha = 0.85f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = cardDuration,
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        letterSpacing = 0.3.sp
-                    )
-                }
-            }
-
+            // "WATCHED" marker for watched non-cinema items (no media-type
+            // pill on the artwork — the type now lives in the metadata line).
             if (isWatched) {
                 Box(
                     modifier = Modifier
@@ -160,6 +170,56 @@ fun VideoCard(
                         fontWeight = FontWeight.Bold
                     )
                 }
+            }
+
+            if (isSaved) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .clip(BadgeShape)
+                        .background(Color.Black.copy(alpha = 0.78f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = "SAVED",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Duration / S:E Badge (bottom-right rounded pill). Unknown durations
+            // stay hidden instead of showing a fabricated value.
+            if (!badgeText.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .clip(BadgeShape)
+                        .background(if (isLive) YouTubeRed else Color.Black.copy(alpha = 0.85f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = badgeText,
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 0.3.sp
+                    )
+                }
+            }
+
+            // Continue-watching progress (YouTube-style red bar).
+            if (effectiveProgress != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth(effectiveProgress.coerceIn(0f, 1f))
+                        .height(3.dp)
+                        .background(YouTubeRed)
+                )
             }
 
             if (onToggleReleaseAlert != null &&
@@ -215,9 +275,23 @@ fun VideoCard(
             Column(
                 modifier = Modifier.weight(1f)
             ) {
+                // The catalog title carries a " (YYYY)" suffix, so strip it
+                // for display — the year is shown once in the meta line below.
+                val releaseYear = remember(video) {
+                    video.releaseDateFormatted?.take(4)?.takeIf { it.all(Char::isDigit) }
+                        ?: video.releaseDateIso?.take(4)?.takeIf { it.all(Char::isDigit) }
+                }
+                val displayTitle = remember(video.title, releaseYear) {
+                    val raw = video.title.trim()
+                    if (!releaseYear.isNullOrBlank()) {
+                        raw.removeSuffix(" ($releaseYear)").trim().ifBlank { raw }
+                    } else {
+                        raw
+                    }
+                }
                 Row(verticalAlignment = Alignment.Top) {
                     Text(
-                        text = video.title,
+                        text = displayTitle,
                         modifier = Modifier.weight(1f),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Medium,
@@ -238,33 +312,41 @@ fun VideoCard(
 
                 Spacer(modifier = Modifier.height(3.dp))
 
+                // Single-line YouTube metadata: Studio • Year (exactly once —
+                // publishedAt duplicates the year, so it is skipped then).
+                // The media-type tag sits right-aligned in quiet muted text.
+                val metaLine = remember(video, releaseYear, continueLabel) {
+                    buildList {
+                        add(video.channelName)
+                        if (!releaseYear.isNullOrBlank()) add(releaseYear)
+                        if (!video.views.isBlank()) add(video.views)
+                        val published = video.publishedAt.takeIf { it.isNotBlank() }
+                        if (published != null && published != releaseYear) add(published)
+                    }.joinToString(" • ")
+                }
+                val typeLabel = remember(video.mediaType) {
+                    when (video.mediaType) {
+                        MediaType.TV_SHOW -> "TV"
+                        MediaType.MOVIE -> "MOVIE"
+                        else -> null
+                    }
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = channelClickModifier
                 ) {
                     Text(
-                        text = video.channelName,
+                        text = metaLine,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 16.sp,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
-
-                    if (video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW) {
-                        Text(
-                            text = "• ${if (video.mediaType == MediaType.TV_SHOW) "TV Series" else "Movie"}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Normal,
-                            lineHeight = 16.sp,
-                            maxLines = 1
-                        )
-                    }
-
                     if (video.isVerified) {
+                        Spacer(modifier = Modifier.width(4.dp))
                         Icon(
                             imageVector = Icons.Default.CheckCircle,
                             contentDescription = "Verified Channel",
@@ -272,48 +354,45 @@ fun VideoCard(
                             modifier = Modifier.size(12.dp)
                         )
                     }
-
-                    if (video.views.isNotBlank()) {
+                    if (!typeLabel.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "•",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = video.views,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Normal,
-                            lineHeight = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    if (video.publishedAt.isNotBlank()) {
-                        Text(
-                            text = "•",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = video.publishedAt,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Normal,
-                            lineHeight = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = typeLabel,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            letterSpacing = 0.6.sp,
+                            maxLines = 1
                         )
                     }
                 }
+                if (!continueLabel.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = continueLabel,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = YouTubeRed,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
-            // 3-Dot Overflow Menu (w-5 h-5 opacity-60)
+            // 3-Dot Overflow Menu (48dp touch target for a11y, YouTube look kept)
             Box {
                 IconButton(
-                    onClick = { menuExpanded = true },
-                    modifier = Modifier.size(32.dp)
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuExpanded = true
+                    },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .heightIn(min = 40.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.MoreVert,
-                        contentDescription = "Options",
+                        contentDescription = "Options for ${video.title}",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         modifier = Modifier.size(20.dp)
                     )

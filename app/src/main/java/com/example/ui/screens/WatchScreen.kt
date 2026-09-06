@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.tmdb.TmdbEpisodeItem
+import com.example.data.introdb.SkipSegment
 import com.example.model.CommentItem
 import com.example.model.MediaType
 import com.example.model.PlayerSnapshot
@@ -59,6 +60,7 @@ import com.example.model.VideoItem
 import com.example.model.playbackKey
 import com.example.model.isUnreleased
 import com.example.ui.components.TvShowEpisodeList
+import com.example.ui.components.SkipSegmentButton
 import com.example.ui.components.AmbientLightBackdrop
 import com.example.ui.components.VideoCard
 import com.example.ui.components.VideoCardSkeleton
@@ -92,6 +94,9 @@ fun WatchScreen(
     isAutoNextEnabled: Boolean = true,
     onPlayNextEpisode: () -> Unit = {},
     onToggleAutoNext: () -> Unit = {},
+    activeSkipSegment: SkipSegment? = null,
+    isSkipSegmentsEnabled: Boolean = true,
+    onSkipSegment: (SkipSegment) -> Unit = {},
     onRetryPlayback: () -> Unit = {},
     onMinimize: () -> Unit,
     onSelectServer: (String) -> Unit,
@@ -228,6 +233,9 @@ fun WatchScreen(
                             nextTitle = nextTargetTitle,
                             nextSubtitle = nextTargetSubtitle,
                             onPlayNext = onPlayNext,
+                            activeSkipSegment = activeSkipSegment,
+                            isSkipSegmentsEnabled = isSkipSegmentsEnabled,
+                            onSkipSegment = onSkipSegment,
                             onRetryPlayback = onRetryPlayback,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -265,6 +273,7 @@ fun WatchScreen(
                                 totalSeasons = totalSeasons,
                                 selectedSeason = selectedSeason,
                                 currentEpisodeNumber = video.currentEpisode ?: 1,
+                                currentSeasonNumber = video.currentSeason,
                                 fallbackThumbnailUrl = video.thumbnailUrl,
                                 onSelectSeason = onSelectSeason,
                                 onSelectEpisode = onSelectEpisode,
@@ -417,6 +426,9 @@ fun WatchScreen(
                             nextTitle = nextTargetTitle,
                             nextSubtitle = nextTargetSubtitle,
                             onPlayNext = onPlayNext,
+                            activeSkipSegment = activeSkipSegment,
+                            isSkipSegmentsEnabled = isSkipSegmentsEnabled,
+                            onSkipSegment = onSkipSegment,
                             onRetryPlayback = onRetryPlayback,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -463,6 +475,7 @@ fun WatchScreen(
                                 totalSeasons = totalSeasons,
                                 selectedSeason = selectedSeason,
                                 currentEpisodeNumber = video.currentEpisode ?: 1,
+                                currentSeasonNumber = video.currentSeason,
                                 fallbackThumbnailUrl = video.thumbnailUrl,
                                 onSelectSeason = onSelectSeason,
                                 onSelectEpisode = onSelectEpisode,
@@ -621,6 +634,9 @@ private fun PlayerSurfaceWithUpNext(
     nextTitle: String?,
     nextSubtitle: String?,
     onPlayNext: (() -> Unit)?,
+    activeSkipSegment: SkipSegment?,
+    isSkipSegmentsEnabled: Boolean,
+    onSkipSegment: (SkipSegment) -> Unit,
     onRetryPlayback: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -662,9 +678,54 @@ private fun PlayerSurfaceWithUpNext(
         val remainingWholeSecond = ceil(remainingSeconds).toInt()
         val latestOnPlayNext by rememberUpdatedState(onPlayNext)
         val hasNativeFullscreen = isFullscreen && FullscreenHelper.isCustomViewActive
+        // Skip pill: Compose overlay for inline playback; the native
+        // fullscreen layer gets the same state via FullscreenHelper effects
+        // below (provider custom views mount above Compose).
+        // The ViewModel derives activeSkipSegment from the trusted
+        // (history-backed) duration, so a manual seek that reports a
+        // placeholder 0 duration must not hide the pill here.
+        val showSkipButton = isSkipSegmentsEnabled &&
+            activeSkipSegment != null &&
+            !hasNativeFullscreen
+        val latestOnSkip by rememberUpdatedState(onSkipSegment)
 
-        DisposableEffect(video.playbackKey(), nextKey, nextTitle, nextSubtitle, isAutoNextEnabled) {
-            if (video.mediaType == MediaType.TV_SHOW &&
+        DisposableEffect(video.playbackKey(), activeSkipSegment, isSkipSegmentsEnabled) {
+            val segment = activeSkipSegment
+            if (isSkipSegmentsEnabled && segment != null) {
+                FullscreenHelper.setSkipTarget(
+                    key = video.playbackKey() + "|" + segment.type.name + "|" + segment.startSec,
+                    label = segment.label(),
+                    isNextEpisode = segment.isNextEpisodeStyle,
+                    onSkip = { latestOnSkip(segment) }
+                )
+            } else {
+                FullscreenHelper.clearSkipTarget()
+            }
+            onDispose {
+                FullscreenHelper.clearSkipTarget()
+            }
+        }
+
+        SideEffect {
+            currentPlaybackSnapshot?.let { snapshot ->
+                FullscreenHelper.updateSkipPlayback(
+                    positionSeconds = snapshot.positionSeconds
+                )
+            }
+        }
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            SkipSegmentButton(
+                segment = activeSkipSegment,
+                visible = showSkipButton,
+                onSkip = { latestOnSkip(it) },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 96.dp)
+            )
+        }
+
+        DisposableEffect(video.playbackKey(), nextKey, nextTitle, nextSubtitle, isAutoNextEnabled) {            if (video.mediaType == MediaType.TV_SHOW &&
                 nextKey != null &&
                 !nextTitle.isNullOrBlank() &&
                 onPlayNext != null
@@ -702,9 +763,12 @@ private fun PlayerSurfaceWithUpNext(
             isAutoNextEnabled,
             remainingWholeSecond,
             showAutoNext,
-            hasNativeFullscreen
+            hasNativeFullscreen,
+            playWhenReady
         ) {
-            if (!showAutoNext || hasNativeFullscreen || !isAutoNextEnabled || autoNextTriggered) {
+            // A paused player must never auto-advance: remaining time is
+            // frozen, so an 8s-remaining pause would otherwise fire mid-pause.
+            if (!showAutoNext || hasNativeFullscreen || !isAutoNextEnabled || autoNextTriggered || !playWhenReady) {
                 return@LaunchedEffect
             }
 

@@ -16,14 +16,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -31,16 +32,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -65,6 +65,8 @@ fun MediaPosterCard(
     isWatched: Boolean = false,
     isSaved: Boolean = false,
     isDownloaded: Boolean = false,
+    progressFraction: Float? = null,
+    continueLabel: String? = null,
     onToggleSave: (() -> Unit)? = null,
     onDownloadClick: (() -> Unit)? = null,
     onMoreOptions: (() -> Unit)? = null
@@ -77,11 +79,21 @@ fun MediaPosterCard(
         ?.take(4)
         ?.takeIf { it.all { char -> char.isDigit() } }
 
+    val haptics = LocalHapticFeedback.current
+    val effectiveProgress = progressFraction?.takeIf { it > 0.01f && it < 0.99f }
+    val episodeLabel = if (video.mediaType == MediaType.TV_SHOW) {
+        "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}"
+    } else null
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .clip(PosterShape)
-            .clickable(onClick = onClick)
+            .clickable(
+                onClick = onClick,
+                role = Role.Button,
+                onClickLabel = "Play ${video.title}"
+            )
             .testTag("poster_card_${video.id}"),
         shape = PosterShape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -119,7 +131,7 @@ fun MediaPosterCard(
                     )
             )
 
-            // Top Badges (Rating, Media Type & Offline status)
+            // Top Badges (Rating, Media Type & Offline status + Save/Download actions)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -144,20 +156,71 @@ fun MediaPosterCard(
                     )
                 }
 
-                // Downloaded checkmark badge if saved locally
-                if (isDownloaded) {
-                    Box(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(Color(0xFF2E7D32))
-                            .padding(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Downloaded",
-                            tint = Color.White,
-                            modifier = Modifier.size(12.dp)
-                        )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Downloaded checkmark badge if saved locally
+                    if (isDownloaded) {
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color(0xFF2E7D32))
+                                .padding(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Downloaded",
+                                tint = Color.White,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
+                    if (onToggleSave != null) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .clickable(
+                                    role = Role.Checkbox,
+                                    onClickLabel = if (isSaved) "Remove ${video.title} from My List" else "Save ${video.title} to My List"
+                                ) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onToggleSave()
+                                }
+                                .background(Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                contentDescription = if (isSaved) "Saved to My List" else "Save to My List",
+                                tint = if (isSaved) YouTubeRed else Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    if (onDownloadClick != null && !isDownloaded) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .clickable(
+                                    role = Role.Button,
+                                    onClickLabel = "Download ${video.title}"
+                                ) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onDownloadClick()
+                                }
+                                .background(Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FileDownload,
+                                contentDescription = "Download",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -222,21 +285,53 @@ fun MediaPosterCard(
                     if (onMoreOptions != null) {
                         Box(
                             modifier = Modifier
-                                .size(24.dp)
+                                .size(40.dp)
                                 .clip(CircleShape)
-                                .clickable(onClick = onMoreOptions)
+                                .clickable(
+                                    role = Role.Button,
+                                    onClickLabel = "Options for ${video.title}",
+                                    onClick = onMoreOptions
+                                )
                                 .background(Color.Black.copy(alpha = 0.4f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.MoreVert,
-                                contentDescription = "Options",
+                                contentDescription = "Options for ${video.title}",
                                 tint = Color.White,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
                 }
+
+                // Continue-watching / episode context under rating row.
+                val bottomMeta = listOfNotNull(
+                    episodeLabel,
+                    continueLabel
+                ).joinToString(" • ")
+                if (bottomMeta.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = bottomMeta,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (continueLabel != null) YouTubeRed else Color.White.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Continue-watching progress bar across the poster bottom edge.
+            if (effectiveProgress != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth(effectiveProgress.coerceIn(0f, 1f))
+                        .height(4.dp)
+                        .background(YouTubeRed)
+                )
             }
         }
     }

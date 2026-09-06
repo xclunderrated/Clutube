@@ -265,13 +265,15 @@ private fun HistoryEntryRow(
                 isWatched = false,
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth(entry.progressFraction)
-                        .height(3.dp)
-                        .background(YouTubeRed)
-                )
+                if (entry.progressFraction > 0.01f) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth(entry.progressFraction.coerceIn(0f, 1f))
+                            .height(3.dp)
+                            .background(YouTubeRed)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -289,7 +291,7 @@ private fun HistoryEntryRow(
                 )
                 Text(
                     text = if (video.mediaType == MediaType.TV_SHOW) {
-                        "S${video.currentSeason}:E${video.currentEpisode}"
+                        "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}"
                     } else {
                         video.channelName
                     },

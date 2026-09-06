@@ -67,9 +67,106 @@ class SettingsManager(context: Context) {
         get() = prefs.getBoolean(KEY_AUTO_NEXT_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_AUTO_NEXT_ENABLED, value).apply()
 
+    /** Master switch for TheIntroDB skip-segment buttons (intro/recap/credits/preview). */
+    var isSkipSegmentsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SKIP_SEGMENTS_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_SKIP_SEGMENTS_ENABLED, value).apply()
+
+    /** Per-segment visibility; all default to true. Reserved for future settings UI. */
+    var isSkipIntroEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SKIP_INTRO_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_SKIP_INTRO_ENABLED, value).apply()
+
+    var isSkipRecapEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SKIP_RECAP_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_SKIP_RECAP_ENABLED, value).apply()
+
+    var isSkipCreditsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SKIP_CREDITS_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_SKIP_CREDITS_ENABLED, value).apply()
+
+    var isSkipPreviewEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SKIP_PREVIEW_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_SKIP_PREVIEW_ENABLED, value).apply()
+
     var releaseNotificationsEnabled: Boolean
         get() = prefs.getBoolean(KEY_RELEASE_NOTIFICATIONS_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_RELEASE_NOTIFICATIONS_ENABLED, value).apply()
+
+    // --- Offline subtitle (CC) preferences ---
+
+    /** Auto-fetch a matching sidecar subtitle when a download finishes. */
+    var isSubtitleAutoDownloadEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SUBTITLE_AUTO_DOWNLOAD, true)
+        set(value) = prefs.edit().putBoolean(KEY_SUBTITLE_AUTO_DOWNLOAD, value).apply()
+
+    /** Preferred offline subtitle language as ISO 639-1 ("en", "es") or "off". */
+    var offlineSubtitleLanguage: String
+        get() = prefs.getString(KEY_OFFLINE_SUBTITLE_LANGUAGE, "en")?.trim().orEmpty().ifBlank { "en" }
+        set(value) = prefs.edit().putString(KEY_OFFLINE_SUBTITLE_LANGUAGE, value.trim().ifBlank { "en" }).apply()
+
+    /** Prefer hearing-impaired (SDH) subtitles when scoring candidates. */
+    var isSubtitlePreferHearingImpaired: Boolean
+        get() = prefs.getBoolean(KEY_SUBTITLE_PREFER_HI, false)
+        set(value) = prefs.edit().putBoolean(KEY_SUBTITLE_PREFER_HI, value).apply()
+
+    /**
+     * Optional user-supplied API keys (BYOK). When blank, the app falls back
+     * to the embedded BuildConfig key (if the maintainer set one in .env),
+     * then to keyless sources (torrent siblings, YIFY scrape, file import).
+     * Never log these values.
+     */
+    var wyzieApiKey: String
+        get() = prefs.getString(KEY_WYZIE_API_KEY, null)?.trim().orEmpty()
+        set(value) = prefs.edit().putString(KEY_WYZIE_API_KEY, value.trim()).apply()
+
+    var subdlApiKey: String
+        get() = prefs.getString(KEY_SUBDL_API_KEY, null)?.trim().orEmpty()
+        set(value) = prefs.edit().putString(KEY_SUBDL_API_KEY, value.trim()).apply()
+
+    /**
+     * Proxy seam for subtitle providers that forbid embedding keys in
+     * distributed binaries (Wyzie's documented guidance). Default points
+     * directly at the provider; a self-hosted Cloudflare Worker URL can be
+     * set here instead — the worker appends the key server-side and the
+     * client code stays unchanged.
+     */
+    var subtitleProxyBaseUrl: String
+        get() = prefs.getString(KEY_SUBTITLE_PROXY_BASE_URL, DEFAULT_SUBTITLE_PROXY_BASE_URL)
+            ?.trim()?.trimEnd('/')?.ifBlank { DEFAULT_SUBTITLE_PROXY_BASE_URL }
+            ?: DEFAULT_SUBTITLE_PROXY_BASE_URL
+        set(value) = prefs.edit().putString(
+            KEY_SUBTITLE_PROXY_BASE_URL,
+            value.trim().trimEnd('/').ifBlank { DEFAULT_SUBTITLE_PROXY_BASE_URL }
+        ).apply()
+
+    /** When true, pressing Download auto-picks the highest-seed torrent for the chosen resolution. */
+    var isAutoPickBestTorrent: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_PICK_BEST_TORRENT, true)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_PICK_BEST_TORRENT, value).apply()
+
+    /** Indexers the user disabled. Empty = all verified indexers enabled. */
+    var disabledTorrentIndexers: Set<String>
+        get() = prefs.getStringSet(KEY_DISABLED_TORRENT_INDEXERS, emptySet())
+            ?.map { it.trim().lowercase() }?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+        set(value) = prefs.edit()
+            .putStringSet(KEY_DISABLED_TORRENT_INDEXERS, value.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet())
+            .apply()
+
+    /** Preferred query order for verified torrent indexers (self-healing). */
+    var torrentIndexerOrder: List<String>
+        get() {
+            val saved = prefs.getString(KEY_TORRENT_INDEXER_ORDER, null)
+                ?.split(INDEXER_ORDER_SEPARATOR)
+                .orEmpty()
+            return com.example.data.torrent.TorrentSourceRegistry.normalizeIndexerOrder(saved)
+        }
+        set(value) {
+            val normalized = com.example.data.torrent.TorrentSourceRegistry.normalizeIndexerOrder(value)
+            prefs.edit()
+                .putString(KEY_TORRENT_INDEXER_ORDER, normalized.joinToString(INDEXER_ORDER_SEPARATOR))
+                .apply()
+        }
 
     fun getPlaybackPreferences(serverId: String): PlaybackPreferences {
         val suffix = preferenceKeySuffix(serverId)
@@ -105,7 +202,7 @@ class SettingsManager(context: Context) {
     }
 
     var showContinueWatchingOnHome: Boolean
-        get() = prefs.getBoolean(KEY_SHOW_CONTINUE_WATCHING_ON_HOME, false)
+        get() = prefs.getBoolean(KEY_SHOW_CONTINUE_WATCHING_ON_HOME, true)
         set(value) = prefs.edit().putBoolean(KEY_SHOW_CONTINUE_WATCHING_ON_HOME, value).apply()
 
     var localProfileName: String
@@ -183,11 +280,23 @@ class SettingsManager(context: Context) {
     /**
      * Reads the current history format and migrates the original
      * watch_history_json list the first time it is encountered.
+     *
+     * A present-but-unparseable payload is stashed to a backup key instead
+     * of being silently discarded, so a corrupt write can never wipe the
+     * user's resume points on the next save.
      */
     fun getWatchHistoryEntries(): List<WatchHistoryEntry> {
         val currentJson = prefs.getString(KEY_WATCH_HISTORY_ENTRIES, null)
         if (currentJson != null) {
-            parseHistoryEntries(currentJson)?.let { return sanitizeHistory(it) }
+            val parsed = parseHistoryEntries(currentJson)
+            if (parsed != null) return sanitizeHistory(parsed)
+            try {
+                prefs.edit()
+                    .putString(KEY_WATCH_HISTORY_CORRUPT_BACKUP, currentJson)
+                    .remove(KEY_WATCH_HISTORY_ENTRIES)
+                    .apply()
+            } catch (_: Exception) {
+            }
         }
 
         val legacyJson = prefs.getString(KEY_WATCH_HISTORY, null) ?: return emptyList()
@@ -216,9 +325,27 @@ class SettingsManager(context: Context) {
             val json = history
                 .map { it.normalized() }
                 .distinctBy { it.key }
-                .take(50)
+                .take(HISTORY_LIMIT)
                 .let(historyEntryListAdapter::toJson)
             prefs.edit().putString(KEY_WATCH_HISTORY_ENTRIES, json).apply()
+        } catch (_: Exception) {
+            // Persistence must never prevent playback from continuing.
+        }
+    }
+
+    /**
+     * Blocking variant for lifecycle edges (onPause/onStop/close). Uses
+     * commit() so the resume point is on disk before the process can die,
+     * unlike the throttled async path used for steady-state ticks.
+     */
+    fun saveWatchHistoryEntriesNow(history: List<WatchHistoryEntry>) {
+        try {
+            val json = history
+                .map { it.normalized() }
+                .distinctBy { it.key }
+                .take(HISTORY_LIMIT)
+                .let(historyEntryListAdapter::toJson)
+            prefs.edit().putString(KEY_WATCH_HISTORY_ENTRIES, json).commit()
         } catch (_: Exception) {
             // Persistence must never prevent playback from continuing.
         }
@@ -274,18 +401,38 @@ class SettingsManager(context: Context) {
         return history
             .map { it.normalized() }
             .distinctBy { it.key }
-            .take(50)
+            .take(HISTORY_LIMIT)
     }
 
     companion object {
+        /** Room for a real catalog: eviction stays LRU via most-recent-first order. */
+        const val HISTORY_LIMIT = 200
+        /** Default subtitle search endpoint. Override via [subtitleProxyBaseUrl]. */
+        const val DEFAULT_SUBTITLE_PROXY_BASE_URL = "https://sub.wyzie.io"
         private const val PREFS_NAME = "clutube_app_preferences"
+        private const val KEY_WATCH_HISTORY_CORRUPT_BACKUP = "watch_history_entries_corrupt_backup"
         private const val KEY_DARK_MODE = "is_dark_mode"
         private const val KEY_SELECTED_SERVER = "selected_server_id"
         private const val KEY_VIDSRC_SERVER_ORDER = "vidsrc_server_order"
         private const val KEY_SELECTED_VIDSRC_SERVER = "selected_vidsrc_server"
         private const val SERVER_ORDER_SEPARATOR = "|"
         private const val KEY_AUTO_NEXT_ENABLED = "auto_next_enabled"
+        private const val KEY_SKIP_SEGMENTS_ENABLED = "skip_segments_enabled"
+        private const val KEY_SKIP_INTRO_ENABLED = "skip_intro_enabled"
+        private const val KEY_SKIP_RECAP_ENABLED = "skip_recap_enabled"
+        private const val KEY_SKIP_CREDITS_ENABLED = "skip_credits_enabled"
+        private const val KEY_SKIP_PREVIEW_ENABLED = "skip_preview_enabled"
+        private const val KEY_AUTO_PICK_BEST_TORRENT = "auto_pick_best_torrent"
+        private const val KEY_DISABLED_TORRENT_INDEXERS = "disabled_torrent_indexers"
+        private const val KEY_TORRENT_INDEXER_ORDER = "torrent_indexer_order"
+        private const val INDEXER_ORDER_SEPARATOR = "|"
         private const val KEY_RELEASE_NOTIFICATIONS_ENABLED = "release_notifications_enabled"
+        private const val KEY_SUBTITLE_AUTO_DOWNLOAD = "subtitle_auto_download"
+        private const val KEY_OFFLINE_SUBTITLE_LANGUAGE = "offline_subtitle_language"
+        private const val KEY_SUBTITLE_PREFER_HI = "subtitle_prefer_hi"
+        private const val KEY_WYZIE_API_KEY = "wyzie_api_key"
+        private const val KEY_SUBDL_API_KEY = "subdl_api_key"
+        private const val KEY_SUBTITLE_PROXY_BASE_URL = "subtitle_proxy_base_url"
         private const val KEY_GLOBAL_PLAYBACK_QUALITY = "playback_quality_global"
         private const val KEY_GLOBAL_PLAYBACK_SUBTITLES = "playback_subtitles_global"
         private const val KEY_PLAYBACK_QUALITY = "playback_quality"

@@ -47,6 +47,28 @@ object MagnetParser {
         )
     }
 
+    private val HEX40 = Regex("^[a-f0-9]{40}$")
+    private val BASE32 = Regex("^[A-Z2-7]{32}$")
+
+    /**
+     * Strict info-hash check: 40 hex chars (v1) or 32 base32 chars.
+     * Rejects the dummy/placeholder hashes historically allowed through
+     * (hash_<timestamp>, all-zeros) so unverifiable magnets never queue.
+     */
+    fun isValidInfoHash(raw: String?): Boolean {
+        val clean = raw?.trim() ?: return false
+        if (clean.isBlank()) return false
+        if (clean.all { it == '0' }) return false
+        if (clean.startsWith("hash_", ignoreCase = true)) return false
+        return HEX40.matches(clean.lowercase()) || BASE32.matches(clean.uppercase())
+    }
+
+    /** Lowercased hash when valid, null otherwise. */
+    fun normalizeInfoHash(raw: String?): String? {
+        val clean = raw?.trim() ?: return null
+        return if (isValidInfoHash(clean)) clean.lowercase() else null
+    }
+
     fun buildMagnet(infoHash: String, name: String, trackers: List<String> = emptyList()): String {
         val encodedName = java.net.URLEncoder.encode(name, StandardCharsets.UTF_8.name())
         val sb = StringBuilder("magnet:?xt=urn:btih:$infoHash&dn=$encodedName")

@@ -2,10 +2,14 @@ package com.example.viewmodel
 
 import androidx.compose.runtime.Immutable
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.StreamService
 import com.example.data.NetworkMonitor
+import com.example.data.introdb.IntroDbRepository
+import com.example.data.introdb.SkipSegment
+import com.example.data.introdb.SkipSegmentType
 import com.example.data.local.LocalStore
 import com.example.data.tmdb.TmdbEpisodeItem
 import com.example.data.tmdb.TmdbRepository
@@ -27,6 +31,8 @@ import com.example.model.deduplicateContinueWatching
 import com.example.model.isUnreleased
 import com.example.model.playbackKey
 import com.example.model.releaseAlertId
+import com.example.model.resumePositionSeconds
+import com.example.model.titleGroupKey
 import com.example.model.releaseDateMillis
 import com.example.notification.ReleaseNotificationScheduler
 import com.example.data.download.DownloadManager
@@ -112,9 +118,19 @@ data class YouTubeUiState(
     val customStreamInputId: String = "",
     val customStreamInputTitle: String = "",
     val isAutoNextEpisodeEnabled: Boolean = true,
-    val showContinueWatchingOnHome: Boolean = false,
+    val showContinueWatchingOnHome: Boolean = true,
     val releaseNotificationsEnabled: Boolean = true,
     val currentPlaybackSnapshot: PlayerSnapshot? = null,
+    val skipSegments: List<SkipSegment> = emptyList(),
+    val activeSkipSegment: SkipSegment? = null,
+    val isSkipSegmentsEnabled: Boolean = true,
+    /**
+     * Netflix-style resume override: the rewound seek target for the current
+     * load. Composition prefers this over the raw history position; it is
+     * cleared on the first snapshot so tracking truth stays exact.
+     */
+    val pendingResumeOverrideKey: String? = null,
+    val pendingResumeOverrideSeconds: Double = 0.0,
     val showHistoryScreen: Boolean = false,
     val showDownloadsScreen: Boolean = false,
     val downloads: List<DownloadEntity> = emptyList(),
@@ -123,6 +139,13 @@ data class YouTubeUiState(
     val availableStorageBytes: Long = 0L,
     val totalStorageBytes: Long = 0L,
     val pendingDownloadTarget: com.example.ui.components.DownloadTarget? = null,
+    val isAutoPickBestTorrent: Boolean = true,
+    val offlineSubtitleLanguage: String = "en",
+    val isSubtitleAutoDownload: Boolean = true,
+    val wyzieApiKey: String = "",
+    val subdlApiKey: String = "",
+    val disabledTorrentIndexers: Set<String> = emptySet(),
+    val torrentIndexerOrder: List<String> = emptyList(),
     val showAddMagnetDialog: Boolean = false,
     val showTorrentSourceDialog: Boolean = false,
     val torrentSources: List<TorrentSource> = emptyList(),
@@ -130,10 +153,19 @@ data class YouTubeUiState(
     val selectedTorrentMedia: VideoItem? = null,
     val selectedTorrentSeason: Int? = null,
     val selectedTorrentEpisode: Int? = null,
-    val playbackPreferences: PlaybackPreferences = PlaybackPreferences()
+    val playbackPreferences: PlaybackPreferences = PlaybackPreferences(),
+    /**
+     * Incremented whenever the Home feed should jump back to the top:
+     * re-tapping the Home tab, switching category, or finishing a manual
+     * refresh. HomeScreen observes this and scrolls its list/grid to item 0.
+     */
+    val homeScrollToTopNonce: Long = 0L
 ) {
     val continueWatching: List<WatchHistoryEntry>
         get() = deduplicateContinueWatching(watchHistory)
+            // A fresh tap inserts a 0s entry before the first snapshot;
+            // keep those ghosts off the shelf until real progress exists.
+            .filter { it.progressFraction > com.example.model.MIN_VISIBLE_PROGRESS_FRACTION }
 
     /** The two most recently touched titles are promoted to normal Home cards. */
     val recentWatched: List<WatchHistoryEntry>
@@ -189,6 +221,7 @@ class YouTubeViewModel : ViewModel() {
     private var searchJob: Job? = null
     private var pendingHistorySaveJob: Job? = null
     private var lastHistoryPersistAtMillis: Long = 0L
+    private var lastLoadAtMillis: Long = 0L
     private var lastEndedKey: String? = null
     private var lastEndedGeneration: Long? = null
     private var failoverMediaKey: String? = null
@@ -196,6 +229,9 @@ class YouTubeViewModel : ViewModel() {
     private var vidSrcFailoverMediaKey: String? = null
     private val vidSrcAttemptedServerHosts = linkedSetOf<String>()
     private var pendingNextEpisodeLookupKey: String? = null
+    private var skipSegmentsKey: String? = null
+    private var skipSegmentsDurationMs: Long? = null
+    private var skipSegmentsFetchJob: Job? = null
 
     private var currentFeedPage: Int = 1
     private var isCurrentlyLoadingMore: Boolean = false
@@ -281,8 +317,16 @@ class YouTubeViewModel : ViewModel() {
                 channels = syncedChannels,
                 watchHistory = savedHistory,
                 isAutoNextEpisodeEnabled = manager.isAutoNextEnabled,
+                isSkipSegmentsEnabled = manager.isSkipSegmentsEnabled,
                 showContinueWatchingOnHome = manager.showContinueWatchingOnHome,
                 releaseNotificationsEnabled = manager.releaseNotificationsEnabled,
+                isAutoPickBestTorrent = manager.isAutoPickBestTorrent,
+                offlineSubtitleLanguage = manager.offlineSubtitleLanguage,
+                isSubtitleAutoDownload = manager.isSubtitleAutoDownloadEnabled,
+                wyzieApiKey = manager.wyzieApiKey,
+                subdlApiKey = manager.subdlApiKey,
+                disabledTorrentIndexers = manager.disabledTorrentIndexers,
+                torrentIndexerOrder = manager.torrentIndexerOrder,
                 playbackPreferences = manager.getPlaybackPreferences(manager.selectedServerId),
                 isOffline = networkMonitor?.isOnline?.value == false
             )
@@ -316,12 +360,11 @@ class YouTubeViewModel : ViewModel() {
             monitor.isOnline.collect { online ->
                 _uiState.update { it.copy(isOffline = !online) }
                 if (online && !wasOnline) {
-                    reloadCurrentCategory()
+                    // Silent background re-sync: must not yank the user's
+                    // scroll position back to the top.
+                    reloadCurrentCategory(scrollToTopOnSuccess = false)
                     loadUpcomingContent()
                     loadTrailerShorts()
-                    if (com.example.util.PlayerViewManager.hasPlayerError.value) {
-                        retryCurrentPlayback()
-                    }
                 }
                 wasOnline = online
             }
@@ -351,11 +394,25 @@ class YouTubeViewModel : ViewModel() {
 
         loadUpcomingContent()
         loadTrailerShorts()
-        reloadCurrentCategory()
+        // Initial load: feed starts at the top already, no scroll event needed.
+        reloadCurrentCategory(scrollToTopOnSuccess = false)
         ReleaseNotificationScheduler.schedule(context.applicationContext)
     }
 
     fun selectTab(index: Int) {
+        val current = _uiState.value
+        // Re-tapping Home while already on Home scrolls the feed to the top
+        // (YouTube behavior) instead of being a no-op.
+        if (index == 0 && current.selectedTab == 0 && !current.isSearching) {
+            _uiState.update {
+                it.copy(
+                    selectedTab = 0,
+                    isSearching = false,
+                    homeScrollToTopNonce = it.homeScrollToTopNonce + 1
+                )
+            }
+            return
+        }
         _uiState.update { it.copy(selectedTab = index, isSearching = false) }
     }
 
@@ -377,11 +434,16 @@ class YouTubeViewModel : ViewModel() {
     }
 
     fun selectCategory(category: String) {
-        _uiState.update { it.copy(selectedCategory = category) }
-        loadCategoryContent(category)
+        if (_uiState.value.selectedCategory == category) {
+            // Same pill tapped again -> just jump to top, no reload needed.
+            _uiState.update { it.copy(homeScrollToTopNonce = it.homeScrollToTopNonce + 1) }
+            return
+        }
+        _uiState.update { it.copy(selectedCategory = category, homeScrollToTopNonce = it.homeScrollToTopNonce + 1) }
+        loadCategoryContent(category, scrollToTopOnSuccess = false)
     }
 
-    private fun loadCategoryContent(category: String) {
+    private fun loadCategoryContent(category: String, scrollToTopOnSuccess: Boolean = false) {
         isCurrentlyLoadingMore = false
         viewModelScope.launch {
             currentFeedPage = 1
@@ -435,7 +497,12 @@ class YouTubeViewModel : ViewModel() {
                             isLoading = false,
                             isFeedRefreshing = false,
                             feedErrorMessage = null,
-                            canLoadMore = true
+                            canLoadMore = true,
+                            homeScrollToTopNonce = if (scrollToTopOnSuccess) {
+                                current.homeScrollToTopNonce + 1
+                            } else {
+                                current.homeScrollToTopNonce
+                            }
                         )
                     }
                 } else {
@@ -500,7 +567,7 @@ class YouTubeViewModel : ViewModel() {
 
     fun loadNextPage() {
         val currentState = _uiState.value
-        if (isCurrentlyLoadingMore || currentState.isLoading || currentState.isLoadingMore || !currentState.canLoadMore || currentState.isSearching || currentState.isOffline) {
+        if (isCurrentlyLoadingMore || currentState.isLoading || currentState.isFeedRefreshing || currentState.isLoadingMore || !currentState.canLoadMore || currentState.isSearching || currentState.isOffline) {
             return
         }
 
@@ -559,8 +626,8 @@ class YouTubeViewModel : ViewModel() {
         _uiState.update { it.copy(deviceLayoutMode = mode) }
     }
 
-    fun reloadCurrentCategory() {
-        loadCategoryContent(_uiState.value.selectedCategory)
+    fun reloadCurrentCategory(scrollToTopOnSuccess: Boolean = true) {
+        loadCategoryContent(_uiState.value.selectedCategory, scrollToTopOnSuccess)
     }
 
     private fun loadTrailerShorts() {
@@ -595,6 +662,16 @@ class YouTubeViewModel : ViewModel() {
 
     fun resumeWatch(entry: WatchHistoryEntry, expand: Boolean = true) {
         playVideo(entry.video, expand = expand)
+        // When the requested title is already loaded in the persistent
+        // WebView, loadMedia early-returns and the rewound override would
+        // never apply. Seek explicitly so Continue always lands on the
+        // resume point instead of wherever playback currently sits.
+        if (!entry.completed &&
+            entry.positionSeconds > 0L &&
+            com.example.util.PlayerViewManager.activeMediaKey == entry.key
+        ) {
+            com.example.util.PlayerViewManager.seekTo(entry.resumePositionSeconds())
+        }
     }
 
     fun removeWatchHistoryEntry(key: String) {
@@ -613,9 +690,10 @@ class YouTubeViewModel : ViewModel() {
     }
 
     fun flushPlaybackProgress() {
-        // evaluateJavascript is asynchronous. Saving immediately here races
-        // the final VidLink timeupdate and persisted resume points can lag by
-        // minutes. Persist only after the WebView has reported its snapshot.
+        // Snapshot-first durability: the in-memory entry is at most ~1s stale,
+        // so persist it synchronously NOW (kill-safe), then let the async JS
+        // round-trip correct it if the WebView is still alive.
+        saveHistoryNowBlocking(_uiState.value.watchHistory)
         com.example.util.PlayerViewManager.requestPlaybackSnapshot {
             saveHistoryNow(_uiState.value.watchHistory)
         }
@@ -626,6 +704,15 @@ class YouTubeViewModel : ViewModel() {
             is PlayerEvent.Ready -> {
                 // The manager already owns the loading state. A ready event is
                 // intentionally lightweight so it cannot overwrite real media state.
+                // One exception: a pending resume override (rewound seek target)
+                // is re-asserted here so providers whose initial applyResume
+                // missed (nested VidSrc iframes, late VidLink mount) still land
+                // on the resume point instead of restarting at zero.
+                val state = _uiState.value
+                val key = state.pendingResumeOverrideKey
+                if (key != null && state.currentPlayingVideo?.playbackKey() == key) {
+                    com.example.util.PlayerViewManager.seekTo(state.pendingResumeOverrideSeconds)
+                }
             }
 
             is PlayerEvent.Progress -> handlePlaybackSnapshot(event.snapshot)
@@ -664,9 +751,12 @@ class YouTubeViewModel : ViewModel() {
 
         // Providers can emit a transient 0/0 snapshot while their metadata is
         // loading. Do not erase a saved resume point with that placeholder.
+        // Scoped to the first seconds after a load so a legitimate later
+        // seek-to-start is still honored.
         if (previousEntry.positionSeconds > 0L &&
             state.currentPlaybackSnapshot == null &&
-            rawPosition <= RESUME_RESET_TOLERANCE_SECONDS
+            rawPosition <= RESUME_RESET_TOLERANCE_SECONDS &&
+            System.currentTimeMillis() - lastLoadAtMillis < LOAD_FRESH_WINDOW_MILLIS
         ) {
             return
         }
@@ -697,8 +787,38 @@ class YouTubeViewModel : ViewModel() {
                 watchedVideoIds = updatedWatched,
                 isPlaying = snapshot.isPlaying,
                 isMuted = snapshot.isMuted,
-                currentPlaybackSnapshot = snapshot
+                currentPlaybackSnapshot = snapshot,
+                // Tracking truth is now live; the one-shot resume override
+                // has served its purpose for this load.
+                pendingResumeOverrideKey = current.pendingResumeOverrideKey
+                    .takeIf { it != snapshot.key },
+                pendingResumeOverrideSeconds = current.pendingResumeOverrideSeconds
+                    .takeIf { current.pendingResumeOverrideKey != snapshot.key }
+                    ?: 0.0
             )
+        }
+        // TheIntroDB v3 `duration_ms` phase B + button-visibility matching.
+        // Uses the same trusted duration as history tracking so VidLink's
+        // placeholder 0/short durations can never trigger a refetch.
+        if (duration > 0L) {
+            maybeRefreshSkipSegmentsWithDuration(currentVideo, duration)
+        }
+        val latest = _uiState.value
+        if (latest.currentPlayingVideo?.playbackKey() == snapshot.key) {
+            val active = activeSkipSegmentFor(
+                latest.skipSegments,
+                snapshot,
+                latest.isSkipSegmentsEnabled,
+                // `duration` here already fell back to the last trusted value,
+                // so manual seeks that report 0/placeholder durations still match.
+                duration.toDouble()
+            )
+            if (active != latest.activeSkipSegment) {
+                _uiState.update { current ->
+                    if (current.currentPlayingVideo?.playbackKey() != snapshot.key) current
+                    else current.copy(activeSkipSegment = active)
+                }
+            }
         }
         scheduleHistorySave()
     }
@@ -789,6 +909,14 @@ class YouTubeViewModel : ViewModel() {
         lastHistoryPersistAtMillis = System.currentTimeMillis()
     }
 
+    /** Blocking variant for lifecycle edges: resume points survive process death. */
+    private fun saveHistoryNowBlocking(history: List<WatchHistoryEntry>) {
+        pendingHistorySaveJob?.cancel()
+        pendingHistorySaveJob = null
+        settingsManager?.saveWatchHistoryEntriesNow(history)
+        lastHistoryPersistAtMillis = System.currentTimeMillis()
+    }
+
     private fun scheduleHistorySave() {
         if (settingsManager == null || pendingHistorySaveJob?.isActive == true) return
         val waitMillis = (HISTORY_SAVE_INTERVAL_MILLIS -
@@ -813,6 +941,7 @@ class YouTubeViewModel : ViewModel() {
             ?.id
             ?: StreamService.DEFAULT_SERVER_ID
         if (remember) settingsManager?.selectedServerId = normalizedServerId
+        lastLoadAtMillis = System.currentTimeMillis()
         _uiState.update { current ->
             val currentVideo = current.currentPlayingVideo
             val updatedVideo = currentVideo?.withStreamUrl(
@@ -834,6 +963,7 @@ class YouTubeViewModel : ViewModel() {
                 currentPlayingVideo = updatedVideo,
                 watchHistory = updatedHistory,
                 currentPlaybackSnapshot = null,
+                activeSkipSegment = null,
                 isPlaying = if (updatedVideo != null) current.isPlaying else false
             )
         }
@@ -911,6 +1041,15 @@ class YouTubeViewModel : ViewModel() {
         )
         val key = readyVideo.playbackKey()
         val previousEntry = current.watchHistory.firstOrNull { it.key == key }
+        val isResume = previousEntry != null && !previousEntry.completed &&
+            previousEntry.positionSeconds > 0L && previousEntry.durationSeconds > 0L
+        // Netflix-style rewind lives in the one-shot override; the history
+        // entry keeps the exact tracking truth.
+        val resumeOverrideSeconds = if (isResume) {
+            previousEntry.resumePositionSeconds()
+        } else {
+            0.0
+        }
         val resumedEntry = if (previousEntry != null && !previousEntry.completed) {
             previousEntry.copy(
                 key = key,
@@ -925,6 +1064,7 @@ class YouTubeViewModel : ViewModel() {
             )
         }
         val updatedHistory = upsertHistory(current.watchHistory, resumedEntry)
+        lastLoadAtMillis = System.currentTimeMillis()
 
         _uiState.update { current ->
             current.copy(
@@ -935,6 +1075,10 @@ class YouTubeViewModel : ViewModel() {
                 selectedSeason = readyVideo.currentSeason,
                 tvEpisodes = emptyList(),
                 currentPlaybackSnapshot = null,
+                skipSegments = emptyList(),
+                activeSkipSegment = null,
+                pendingResumeOverrideKey = key.takeIf { isResume },
+                pendingResumeOverrideSeconds = resumeOverrideSeconds,
                 showHistoryScreen = false,
                 // A channel page is a navigable surface, not a background
                 // layer. Selecting one of its titles must replace it with
@@ -947,6 +1091,7 @@ class YouTubeViewModel : ViewModel() {
             )
         }
         saveHistoryNow(updatedHistory)
+        requestSkipSegments(readyVideo)
         if (previousEntry?.completed == true &&
             com.example.util.PlayerViewManager.activeMediaKey == key
         ) {
@@ -1046,6 +1191,8 @@ class YouTubeViewModel : ViewModel() {
         )
         val key = updatedVideo.playbackKey()
         val previousEntry = current.watchHistory.firstOrNull { it.key == key }
+        val isResume = previousEntry != null && !previousEntry.completed &&
+            previousEntry.positionSeconds > 0L && previousEntry.durationSeconds > 0L
         val entry = if (previousEntry != null && !previousEntry.completed) {
             previousEntry.copy(
                 key = key,
@@ -1060,6 +1207,7 @@ class YouTubeViewModel : ViewModel() {
             )
         }
         val updatedHistory = upsertHistory(current.watchHistory, entry)
+        lastLoadAtMillis = System.currentTimeMillis()
 
         _uiState.update { current ->
             current.copy(
@@ -1068,10 +1216,19 @@ class YouTubeViewModel : ViewModel() {
                 isPlaying = true,
                 watchHistory = updatedHistory,
                 tvEpisodes = if (current.selectedSeason == safeSeason) current.tvEpisodes else emptyList(),
-                currentPlaybackSnapshot = null
+                currentPlaybackSnapshot = null,
+                skipSegments = emptyList(),
+                activeSkipSegment = null,
+                pendingResumeOverrideKey = key.takeIf { isResume },
+                pendingResumeOverrideSeconds = if (isResume) {
+                    previousEntry.resumePositionSeconds()
+                } else {
+                    0.0
+                }
             )
         }
         saveHistoryNow(updatedHistory)
+        requestSkipSegments(updatedVideo)
 
         if (current.selectedSeason != safeSeason) {
             fetchTvSeasonEpisodes(currentVideo.tmdbId?.toIntOrNull() ?: return, safeSeason)
@@ -1082,6 +1239,244 @@ class YouTubeViewModel : ViewModel() {
         val enabled = !_uiState.value.isAutoNextEpisodeEnabled
         settingsManager?.isAutoNextEnabled = enabled
         _uiState.update { it.copy(isAutoNextEpisodeEnabled = enabled) }
+    }
+
+    fun setSkipSegmentsEnabled(enabled: Boolean) {
+        settingsManager?.isSkipSegmentsEnabled = enabled
+        _uiState.update { state ->
+            state.copy(
+                isSkipSegmentsEnabled = enabled,
+                activeSkipSegment = if (enabled) state.activeSkipSegment else null
+            )
+        }
+        if (enabled) {
+            _uiState.value.currentPlayingVideo?.let { requestSkipSegments(it) }
+        }
+    }
+
+    /**
+     * TheIntroDB v3 read-only lookup (keyless `GET /media`).
+     * Phase A fires on media change with `durationMs = null`; Phase B refires
+     * once [handlePlaybackSnapshot] trusts the provider duration so v3 can
+     * disambiguate release cuts via `duration_ms`.
+     */
+    private fun requestSkipSegments(video: VideoItem, durationMs: Long? = null) {
+        val key = video.playbackKey()
+        val tmdbId = video.tmdbId?.toIntOrNull()
+        val isTv = video.mediaType == MediaType.TV_SHOW
+        if (tmdbId == null) {
+            skipSegmentsKey = key
+            skipSegmentsDurationMs = durationMs
+            _uiState.update { state ->
+                if (state.currentPlayingVideo?.playbackKey() == key) {
+                    state.copy(skipSegments = emptyList(), activeSkipSegment = null)
+                } else state
+            }
+            return
+        }
+        skipSegmentsFetchJob?.cancel()
+        skipSegmentsKey = key
+        if (durationMs == null) {
+            skipSegmentsDurationMs = null
+            _uiState.update { state ->
+                if (state.currentPlayingVideo?.playbackKey() == key) {
+                    state.copy(skipSegments = emptyList(), activeSkipSegment = null)
+                } else state
+            }
+        } else {
+            skipSegmentsDurationMs = durationMs
+        }
+        skipSegmentsFetchJob = viewModelScope.launch {
+            Log.d(
+                SKIP_LOG_TAG,
+                "fetch key=$key tmdbId=$tmdbId season=${if (isTv) video.currentSeason else null}" +
+                    " episode=${if (isTv) video.currentEpisode else null} durationMs=$durationMs"
+            )
+            val result = IntroDbRepository.getSegments(
+                cacheKey = key,
+                tmdbId = tmdbId,
+                season = if (isTv) video.currentSeason.coerceAtLeast(1) else null,
+                episode = if (isTv) video.currentEpisode.coerceAtLeast(1) else null,
+                durationMs = durationMs
+            )
+            val segments = result.getOrNull().orEmpty()
+            Log.d(
+                SKIP_LOG_TAG,
+                "result key=$key segments=${segments.size} " +
+                    segments.joinToString { "${it.type}:${it.startSec}-${it.endSec}" }
+            )
+            if (_uiState.value.currentPlayingVideo?.playbackKey() != key) return@launch
+            if (skipSegmentsKey != key) return@launch
+            _uiState.update { state ->
+                if (state.currentPlayingVideo?.playbackKey() != key) state
+                else {
+                    val filtered = filterSkipSegments(segments)
+                    state.copy(
+                        skipSegments = filtered,
+                        activeSkipSegment = activeSkipSegmentFor(
+                            filtered,
+                            state.currentPlaybackSnapshot,
+                            state.isSkipSegmentsEnabled,
+                            trustedDurationSecFor(key, state.currentPlaybackSnapshot)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Phase B: refetch once with the trusted provider duration so v3
+     * `duration_ms` matching picks the right cut. Bucketed to 30s and fired
+     * at most once per bucket per title.
+     */
+    private fun maybeRefreshSkipSegmentsWithDuration(video: VideoItem, durationSeconds: Long) {
+        if (durationSeconds < MIN_RELIABLE_DURATION_SECONDS) return
+        val key = video.playbackKey()
+        if (skipSegmentsKey != key) {
+            requestSkipSegments(video, durationSeconds * 1000L)
+            return
+        }
+        val durationMs = durationSeconds * 1000L
+        val lastBucket = (skipSegmentsDurationMs ?: 0L) / 30_000L
+        val nextBucket = durationMs / 30_000L
+        if (skipSegmentsDurationMs != null && lastBucket == nextBucket) return
+        // Only refire when the duration moved materially (>5%) or was unknown.
+        val last = skipSegmentsDurationMs
+        if (last != null && last > 0L) {
+            val delta = kotlin.math.abs(durationMs - last).toDouble() / last.toDouble()
+            if (delta < 0.05) return
+        }
+        requestSkipSegments(video, durationMs)
+    }
+
+    private fun filterSkipSegments(segments: List<SkipSegment>): List<SkipSegment> {
+        val manager = settingsManager
+        if (manager == null) return segments
+        return segments.filter { segment ->
+            when (segment.type) {
+                SkipSegmentType.INTRO -> manager.isSkipIntroEnabled
+                SkipSegmentType.RECAP -> manager.isSkipRecapEnabled
+                SkipSegmentType.CREDITS -> manager.isSkipCreditsEnabled
+                SkipSegmentType.PREVIEW -> manager.isSkipPreviewEnabled
+            }
+        }
+    }
+
+    private fun activeSkipSegmentFor(
+        segments: List<SkipSegment>,
+        snapshot: PlayerSnapshot?,
+        enabled: Boolean,
+        trustedDurationSec: Double
+    ): SkipSegment? {
+        if (!enabled || snapshot == null) return null
+        // Intentionally shown while paused too: a paused player freezes
+        // remaining time, and the pill is the fastest resume path.
+        return SkipSegment.selectActive(segments, snapshot.positionSeconds)
+            ?: trailingNextEpisodeSegment(snapshot, trustedDurationSec)
+    }
+
+    /**
+     * Deterministic fallback so TV always offers "Next Episode" in the
+     * trailing window, even when TheIntroDB has no credits/preview data for
+     * the episode (community coverage is sparse). Never fires when real
+     * credits/preview segments exist, and never for movies.
+     *
+     * Uses the trusted (history-backed) duration, not the raw snapshot:
+     * providers can report 0 or placeholder durations around manual seeks.
+     */
+    private fun trailingNextEpisodeSegment(
+        snapshot: PlayerSnapshot,
+        trustedDurationSec: Double
+    ): SkipSegment? {
+        val state = _uiState.value
+        val video = state.currentPlayingVideo ?: return null
+        if (!state.isSkipSegmentsEnabled) return null
+        if (video.mediaType != MediaType.TV_SHOW) return null
+        if (video.playbackKey() != snapshot.key) return null
+        if (state.skipSegments.any {
+                it.type == SkipSegmentType.CREDITS || it.type == SkipSegmentType.PREVIEW
+            }
+        ) return null
+        val duration = trustedDurationSec
+            .takeIf { it.isFinite() && it > TRAILING_NEXT_EPISODE_MIN_DURATION_SEC }
+            ?: return null
+        val position = snapshot.positionSeconds
+            .takeIf { it.isFinite() && it >= 0.0 }
+            ?: return null
+        if (duration - position > TRAILING_NEXT_EPISODE_WINDOW_SEC) return null
+        if (!hasNextEpisode()) return null
+        Log.d(SKIP_LOG_TAG, "synthetic trailing next-episode pill at $position/$duration")
+        return SkipSegment(
+            type = SkipSegmentType.CREDITS,
+            startSec = (duration - TRAILING_NEXT_EPISODE_WINDOW_SEC).coerceAtLeast(0.0),
+            endSec = null,
+            endsAtMediaEnd = true
+        )
+    }
+
+    /** History-backed duration; survives placeholder 0/short provider reports. */
+    private fun trustedDurationSecFor(key: String, snapshot: PlayerSnapshot?): Double {
+        _uiState.value.watchHistory.firstOrNull { it.key == key }
+            ?.durationSeconds?.toDouble()?.takeIf { it > 0 }?.let { return it }
+        snapshot?.durationSeconds?.takeIf { it.isFinite() && it > 0 }?.let { return it }
+        return 0.0
+    }
+
+    /** Mirrors [playNextEpisode]'s resolution order without navigating. */
+    private fun hasNextEpisode(): Boolean {
+        val state = _uiState.value
+        val video = state.currentPlayingVideo ?: return false
+        if (video.mediaType != MediaType.TV_SHOW) return false
+        val totalSeasons = max(state.totalSeasons, video.totalSeasons)
+        val next = EpisodeNavigator.nextEpisode(
+            currentSeason = video.currentSeason,
+            currentEpisode = video.currentEpisode,
+            episodes = state.tvEpisodes.filterNot { isUnreleased(it.airDate) },
+            totalSeasons = totalSeasons
+        )
+        if (next != null) return true
+        if (video.totalEpisodes > video.currentEpisode) return true
+        if (video.currentSeason < totalSeasons) return true
+        return false
+    }
+
+    /**
+     * Button tap handler. Bounded segments seek past `endSec`; open-ended
+     * credit/preview tails ("Next Episode" style) advance the episode when a
+     * next episode exists, otherwise they are ignored (never blind-seek).
+     */
+    fun onSkipSegment(segment: SkipSegment) {
+        val state = _uiState.value
+        val video = state.currentPlayingVideo ?: return
+        if (!state.isSkipSegmentsEnabled) return
+        if (segment.isNextEpisodeStyle && video.mediaType == MediaType.TV_SHOW) {
+            val totalSeasons = max(state.totalSeasons, video.totalSeasons)
+            val hasNext = EpisodeNavigator.nextEpisode(
+                currentSeason = video.currentSeason,
+                currentEpisode = video.currentEpisode,
+                episodes = state.tvEpisodes.filterNot { isUnreleased(it.airDate) },
+                totalSeasons = totalSeasons
+            ) != null || video.currentEpisode < video.totalEpisodes ||
+                video.currentSeason < totalSeasons
+            if (hasNext) {
+                playNextEpisode()
+                return
+            }
+            // Last episode's tail: fall through to a bounded seek if possible.
+            val end = segment.endSec
+            if (end != null) {
+                com.example.util.PlayerViewManager.seekTo(end + 0.3)
+            }
+            return
+        }
+        val end = segment.endSec ?: return
+        com.example.util.PlayerViewManager.seekTo(end + 0.3)
+        // Optimistically hide until the post-seek snapshot lands.
+        _uiState.update { current ->
+            if (current.activeSkipSegment == segment) current.copy(activeSkipSegment = null)
+            else current
+        }
     }
 
     fun setShowContinueWatchingOnHome(enabled: Boolean) {
@@ -1207,12 +1602,17 @@ class YouTubeViewModel : ViewModel() {
     fun closePlayer() {
         resetAutomaticFailover()
         flushPlaybackProgress()
+        skipSegmentsFetchJob?.cancel()
+        skipSegmentsKey = null
+        skipSegmentsDurationMs = null
         com.example.util.PlayerViewManager.releasePlayer()
         _uiState.update {
             it.copy(
                 currentPlayingVideo = null,
                 isPlayerExpanded = false,
-                currentPlaybackSnapshot = null
+                currentPlaybackSnapshot = null,
+                skipSegments = emptyList(),
+                activeSkipSegment = null
             )
         }
     }
@@ -1222,6 +1622,7 @@ class YouTubeViewModel : ViewModel() {
         val video = state.currentPlayingVideo ?: return
         val context = playbackContext ?: return
         resetAutomaticFailover()
+        lastLoadAtMillis = System.currentTimeMillis()
         val resumePosition = state.currentPlaybackSnapshot?.normalizedPositionSeconds?.toDouble()
             ?: state.currentHistoryEntry?.positionSeconds?.toDouble()
             ?: 0.0
@@ -1270,6 +1671,7 @@ class YouTubeViewModel : ViewModel() {
         val normalized = StreamService.normalizeVidSrcServerHost(host)
         settingsManager?.selectedVidSrcServerId = normalized
         val current = _uiState.value
+        lastLoadAtMillis = System.currentTimeMillis()
         _uiState.update { state ->
             val currentVideo = state.currentPlayingVideo
             val updatedVideo = currentVideo?.withStreamUrl(
@@ -1484,6 +1886,7 @@ class YouTubeViewModel : ViewModel() {
         }
     }
 
+    /** Id-based variant (movies, legacy entries, bulk history actions). */
     fun toggleWatched(videoId: String) {
         val current = _uiState.value
         val watched = current.watchedVideoIds.toMutableSet()
@@ -1499,6 +1902,46 @@ class YouTubeViewModel : ViewModel() {
         // Synchronize with watch history single source of truth:
         val updatedHistory = current.watchHistory.map { entry ->
             if (entry.video.id == videoId) {
+                entry.copy(
+                    completed = isNowWatched,
+                    positionSeconds = if (isNowWatched) {
+                        if (entry.durationSeconds > 0) entry.durationSeconds else kotlin.math.max(entry.positionSeconds, 1L)
+                    } else 0L
+                )
+            } else {
+                entry
+            }
+        }
+        saveHistoryNow(updatedHistory)
+
+        _uiState.update { it.copy(watchedVideoIds = watched, watchHistory = updatedHistory) }
+    }
+
+    /**
+     * Episode-scoped variant: toggles only the exact S:E entry when one
+     * exists, so marking S2:E4 watched no longer completes the whole
+     * series. Falls back to id matching for movies and legacy entries.
+     */
+    fun toggleWatched(video: VideoItem) {
+        val key = video.playbackKey()
+        val hasExactEntry = _uiState.value.watchHistory.any { it.key == key }
+        if (!hasExactEntry) {
+            toggleWatched(video.id)
+            return
+        }
+        val current = _uiState.value
+        val watched = current.watchedVideoIds.toMutableSet()
+        val isNowWatched = if (watched.contains(video.id)) {
+            watched.remove(video.id)
+            false
+        } else {
+            watched.add(video.id)
+            true
+        }
+        settingsManager?.watchedVideoIds = watched
+
+        val updatedHistory = current.watchHistory.map { entry ->
+            if (entry.key == key) {
                 entry.copy(
                     completed = isNowWatched,
                     positionSeconds = if (isNowWatched) {
@@ -1654,7 +2097,7 @@ class YouTubeViewModel : ViewModel() {
                 queue = emptyList(),
                 localProfileName = "Clutube",
                 localProfileAvatar = "C",
-                showContinueWatchingOnHome = false,
+                showContinueWatchingOnHome = true,
                 releaseNotificationsEnabled = true,
                 notifications = emptyList(),
                 releaseAlerts = emptyList(),
@@ -2090,6 +2533,64 @@ class YouTubeViewModel : ViewModel() {
         _uiState.update { it.copy(pendingDownloadTarget = null) }
     }
 
+    fun setAutoPickBestTorrent(enabled: Boolean) {
+        settingsManager?.isAutoPickBestTorrent = enabled
+        _uiState.update { it.copy(isAutoPickBestTorrent = enabled) }
+    }
+
+    fun setOfflineSubtitleLanguage(language: String) {
+        val normalized = com.example.data.subtitles.normalizeSubtitleLanguage(language)
+        settingsManager?.offlineSubtitleLanguage = normalized
+        _uiState.update { it.copy(offlineSubtitleLanguage = normalized) }
+    }
+
+    fun setSubtitleAutoDownload(enabled: Boolean) {
+        settingsManager?.isSubtitleAutoDownloadEnabled = enabled
+        _uiState.update { it.copy(isSubtitleAutoDownload = enabled) }
+    }
+
+    /** BYOK subtitle keys (blank = use embedded key, then keyless sources). */
+    fun setWyzieApiKey(key: String) {
+        val trimmed = key.trim()
+        settingsManager?.wyzieApiKey = trimmed
+        _uiState.update { it.copy(wyzieApiKey = trimmed) }
+    }
+
+    fun setSubdlApiKey(key: String) {
+        val trimmed = key.trim()
+        settingsManager?.subdlApiKey = trimmed
+        _uiState.update { it.copy(subdlApiKey = trimmed) }
+    }
+
+    /** Enabled indexer ids honoring user-disabled sources (empty disabled = all). */
+    fun enabledTorrentIndexers(): Set<String> {
+        val all = com.example.data.torrent.TorrentSourceRegistry.VERIFIED_INDEXERS.map { it.id }.toSet()
+        val disabled = _uiState.value.disabledTorrentIndexers.map { it.trim().lowercase() }.toSet()
+        return all.filter { it.lowercase() !in disabled }.toSet()
+    }
+
+    fun setTorrentIndexerEnabled(indexerId: String, enabled: Boolean) {
+        val id = indexerId.trim().lowercase()
+        if (id.isBlank() || !com.example.data.torrent.TorrentSourceRegistry.isKnownIndexer(id)) return
+        val current = _uiState.value.disabledTorrentIndexers.map { it.trim().lowercase() }.toMutableSet()
+        if (enabled) current.remove(id) else current.add(id)
+        // Never allow switching off the last enabled source.
+        val remaining = com.example.data.torrent.TorrentSourceRegistry.VERIFIED_INDEXERS
+            .map { it.id.lowercase() }.filter { it !in current }
+        if (remaining.isEmpty()) {
+            showFeedback("Keep at least one torrent source enabled")
+            return
+        }
+        settingsManager?.disabledTorrentIndexers = current
+        _uiState.update { it.copy(disabledTorrentIndexers = current) }
+    }
+
+    fun saveTorrentIndexerOrder(order: List<String>) {
+        val normalized = com.example.data.torrent.TorrentSourceRegistry.normalizeIndexerOrder(order)
+        settingsManager?.torrentIndexerOrder = normalized
+        _uiState.update { it.copy(torrentIndexerOrder = normalized) }
+    }
+
     fun startConfiguredDownload(
         target: com.example.ui.components.DownloadTarget,
         server: String,
@@ -2097,13 +2598,17 @@ class YouTubeViewModel : ViewModel() {
         subtitleCc: String
     ) {
         _uiState.update { it.copy(pendingDownloadTarget = null) }
+        // Remember the chosen subtitle language as the default for next time.
+        setOfflineSubtitleLanguage(subtitleCc)
+        val enabled = enabledTorrentIndexers()
         when (target) {
             is com.example.ui.components.DownloadTarget.Movie -> {
                 downloadManager?.downloadMovie(
                     video = target.video,
                     quality = quality,
                     server = server,
-                    subtitleCc = subtitleCc
+                    subtitleCc = subtitleCc,
+                    enabledIndexers = enabled
                 )
                 showFeedback("Queued '${target.video.title}' ($quality · $server)")
             }
@@ -2113,7 +2618,8 @@ class YouTubeViewModel : ViewModel() {
                     episode = target.episode,
                     quality = quality,
                     server = server,
-                    subtitleCc = subtitleCc
+                    subtitleCc = subtitleCc,
+                    enabledIndexers = enabled
                 )
                 showFeedback("Queued S${target.episode.seasonNumber}:E${target.episode.episodeNumber} ($quality · $server)")
             }
@@ -2124,12 +2630,94 @@ class YouTubeViewModel : ViewModel() {
                     episodes = target.episodes,
                     quality = quality,
                     server = server,
-                    subtitleCc = subtitleCc
+                    subtitleCc = subtitleCc,
+                    enabledIndexers = enabled
                 )
                 val count = target.episodes.filter { it.seasonNumber == target.seasonNumber }.size
                 showFeedback("Queued Season ${target.seasonNumber} ($count episodes · $quality · $server)")
             }
         }
+    }
+
+    /**
+     * Auto-download path for the "Auto-pick best torrent" option: picks the
+     * highest-seed torrent matching the chosen resolution and queues it
+     * immediately, per episode for seasons.
+     */
+    fun startAutoBestDownload(
+        target: com.example.ui.components.DownloadTarget,
+        quality: String
+    ) {
+        _uiState.update { it.copy(pendingDownloadTarget = null) }
+        val dm = downloadManager
+        if (dm == null) {
+            showFeedback("Downloads not ready yet, try again")
+            return
+        }
+        val enabled = enabledTorrentIndexers()
+        when (target) {
+            is com.example.ui.components.DownloadTarget.Movie -> {
+                showFeedback("Finding best $quality torrent for '${target.video.title}'…")
+                dm.autoDownloadBestTorrent(
+                    video = target.video,
+                    requestedQuality = quality,
+                    enabledIndexers = enabled,
+                    onResult = { picked ->
+                        showFeedback(autoPickFeedback(quality, picked, "'${target.video.title}'"))
+                    }
+                )
+            }
+            is com.example.ui.components.DownloadTarget.Episode -> {
+                val ep = target.episode
+                showFeedback("Finding best $quality torrent for S${ep.seasonNumber}:E${ep.episodeNumber}…")
+                dm.autoDownloadBestTorrent(
+                    video = target.video,
+                    requestedQuality = quality,
+                    season = ep.seasonNumber,
+                    episode = ep.episodeNumber,
+                    enabledIndexers = enabled,
+                    onResult = { picked ->
+                        showFeedback(autoPickFeedback(quality, picked, "S${ep.seasonNumber}:E${ep.episodeNumber}"))
+                    },
+                    episodeTitle = ep.name,
+                    episodeStillUrl = ep.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+                )
+            }
+            is com.example.ui.components.DownloadTarget.Season -> {
+                val seasonEpisodes = target.episodes.filter { it.seasonNumber == target.seasonNumber }
+                if (seasonEpisodes.isEmpty()) {
+                    showFeedback("No episodes found for Season ${target.seasonNumber}")
+                    return
+                }
+                showFeedback("Finding best $quality torrents for ${seasonEpisodes.size} episodes…")
+                seasonEpisodes.forEach { ep ->
+                    dm.autoDownloadBestTorrent(
+                        video = target.video,
+                        requestedQuality = quality,
+                        season = target.seasonNumber,
+                        episode = ep.episodeNumber,
+                        onResult = null,
+                        enabledIndexers = enabled,
+                        episodeTitle = ep.name,
+                        episodeStillUrl = ep.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Builds the toast for an auto-pick result. When the exact resolution was
+     * missing and the ladder grabbed the next one up (or down), says so
+     * explicitly instead of pretending the request was met exactly.
+     */
+    private fun autoPickFeedback(requestedQuality: String, picked: TorrentSource?, label: String): String {
+        if (picked == null) return "No torrents found for $label — try Browse or another title"
+        val want = TorrentIndexerService.normalizeQuality(requestedQuality)
+        val actual = TorrentIndexerService.normalizeQuality(picked.quality)
+        val detail = "${picked.quality} · ▲${picked.seeders} · ${picked.provider}"
+        return if (want == "unknown" || actual == want) "Queued $label ($detail)"
+        else "No $requestedQuality available — grabbed $detail instead"
     }
 
     fun startConfiguredTorrentDownload(
@@ -2150,18 +2738,26 @@ class YouTubeViewModel : ViewModel() {
                     video = target.video,
                     source = source,
                     season = target.episode.seasonNumber,
-                    episode = target.episode.episodeNumber
+                    episode = target.episode.episodeNumber,
+                    episodeTitle = target.episode.name,
+                    episodeStillUrl = target.episode.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
                 )
                 showFeedback("Queued S${target.episode.seasonNumber}:E${target.episode.episodeNumber} (${source.quality} · ${source.provider})")
             }
             is com.example.ui.components.DownloadTarget.Season -> {
+                // NOTE: one hand-picked torrent must never be cloned across
+                // episodes (same bytes behind N labels = wrong-episode
+                // playback). Each episode keeps its own torrent; the per-
+                // episode auto path above is the correct bulk route.
                 val seasonEpisodes = target.episodes.filter { it.seasonNumber == target.seasonNumber }
                 seasonEpisodes.forEach { ep ->
                     downloadManager?.downloadTorrent(
                         video = target.video,
                         source = source.copy(season = target.seasonNumber, episode = ep.episodeNumber),
                         season = target.seasonNumber,
-                        episode = ep.episodeNumber
+                        episode = ep.episodeNumber,
+                        episodeTitle = ep.name,
+                        episodeStillUrl = ep.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
                     )
                 }
                 showFeedback("Queued Season ${target.seasonNumber} (${seasonEpisodes.size} episodes · ${source.quality})")
@@ -2201,18 +2797,21 @@ class YouTubeViewModel : ViewModel() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingTorrentSources = true) }
             val year = video.releaseDateFormatted?.take(4)
+            val enabled = enabledTorrentIndexers()
             val sources = if (video.mediaType == MediaType.TV_SHOW) {
                 TorrentIndexerService.resolveTvTorrents(
                     imdbId = video.imdbId ?: video.tmdbId,
                     showTitle = video.title,
                     seasonNumber = season,
-                    episodeNumber = episode
+                    episodeNumber = episode,
+                    enabledIndexers = enabled
                 )
             } else {
                 TorrentIndexerService.resolveMovieTorrents(
                     imdbId = video.imdbId ?: video.tmdbId,
                     title = video.title,
-                    year = year
+                    year = year,
+                    enabledIndexers = enabled
                 )
             }
             _uiState.update {
@@ -2225,8 +2824,25 @@ class YouTubeViewModel : ViewModel() {
     }
 
     fun downloadTorrentSource(source: TorrentSource, video: VideoItem, season: Int? = null, episode: Int? = null) {
-        downloadManager?.downloadTorrent(video, source, season, episode)
-        showFeedback("Queued '${source.title}' via ${source.provider}")
+        // Resolve the real episode name/still so the Downloads row and the
+        // offline player can label this exact S/E — never a stale title.
+        val safeSeason = (season ?: source.season ?: 1).coerceAtLeast(1)
+        val safeEpisode = (episode ?: source.episode ?: 1).coerceAtLeast(1)
+        val matching = _uiState.value.tvEpisodes.firstOrNull {
+            it.seasonNumber == safeSeason && it.episodeNumber == safeEpisode
+        }
+        downloadManager?.downloadTorrent(
+            video = video,
+            source = source,
+            season = safeSeason,
+            episode = safeEpisode,
+            episodeTitle = matching?.name,
+            episodeStillUrl = matching?.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+        )
+        showFeedback(
+            if (video.mediaType == MediaType.TV_SHOW) "Queued S${safeSeason}:E${safeEpisode} (${source.quality} · ${source.provider})"
+            else "Queued '${source.title}' via ${source.provider}"
+        )
         _uiState.update { it.copy(showTorrentSourceDialog = false) }
     }
 
@@ -2244,15 +2860,23 @@ class YouTubeViewModel : ViewModel() {
 
     /**
      * Triggered from 3-dot overflow menu on any video or show card.
-     * For TV shows, seamlessly targets the exact episode where the user arrived or is watching.
+     * Targets the exact episode the card is currently pointing at
+     * (video.currentSeason/Episode) — history is only a fallback when the
+     * card itself is still on the default S1E1.
      */
     fun downloadVideoFromMenu(video: VideoItem) {
         if (video.mediaType == MediaType.TV_SHOW) {
+            val cardSeason = video.currentSeason.coerceAtLeast(1)
+            val cardEpisode = video.currentEpisode.coerceAtLeast(1)
             val historyEntry = _uiState.value.watchHistory.firstOrNull {
                 it.video.id == video.id || (it.video.tmdbId != null && it.video.tmdbId == video.tmdbId)
             }
-            val targetSeason = historyEntry?.video?.currentSeason ?: video.currentSeason.coerceAtLeast(1)
-            val targetEpisode = historyEntry?.video?.currentEpisode ?: video.currentEpisode.coerceAtLeast(1)
+            // Prefer where the user is; fall back to history only when the
+            // card carries no real position yet (still S1E1 default).
+            val targetSeason = if (cardSeason != 1 || cardEpisode != 1) cardSeason
+                else historyEntry?.video?.currentSeason?.coerceAtLeast(1) ?: cardSeason
+            val targetEpisode = if (cardSeason != 1 || cardEpisode != 1) cardEpisode
+                else historyEntry?.video?.currentEpisode?.coerceAtLeast(1) ?: cardEpisode
 
             val matchingEpisode = _uiState.value.tvEpisodes.firstOrNull {
                 it.seasonNumber == targetSeason && it.episodeNumber == targetEpisode
@@ -2294,6 +2918,29 @@ class YouTubeViewModel : ViewModel() {
         showFeedback("Download deleted")
     }
 
+    /** On-demand offline subtitle fetch (Wyzie → SubDL → YIFY cascade). */
+    fun fetchSubtitlesForDownload(id: String, force: Boolean = false) {
+        val dm = downloadManager
+        if (dm == null) {
+            showFeedback("Downloads not ready yet, try again")
+            return
+        }
+        showFeedback("Searching subtitles…")
+        dm.fetchSubtitlesForDownload(id, force) { _, message ->
+            showFeedback(message)
+        }
+    }
+
+    /** Persists manual subtitle A/V sync correction for a download. */
+    fun updateSubtitleOffset(id: String, offsetMs: Long) {
+        downloadManager?.updateSubtitleOffset(id, offsetMs)
+    }
+
+    /** Persists the selected subtitle track ("sidecar", "emb:g:t", or null). */
+    fun setSubtitleTrack(id: String, trackId: String?) {
+        downloadManager?.setSelectedSubtitleTrack(id, trackId)
+    }
+
     fun pauseAllDownloads() {
         downloadManager?.pauseAll()
     }
@@ -2307,12 +2954,47 @@ class YouTubeViewModel : ViewModel() {
         showFeedback("Cleared completed downloads")
     }
 
+    fun retryAllFailedDownloads() {
+        downloadManager?.retryAllFailed()
+        showFeedback("Retrying failed downloads")
+    }
+
+    fun clearFailedDownloads() {
+        downloadManager?.clearFailed()
+        showFeedback("Cleared failed downloads")
+    }
+
+    /** Fetches missing sidecars for every completed download without one. */
+    fun downloadAllMissingSubtitles() {
+        val dm = downloadManager
+        if (dm == null) {
+            showFeedback("Downloads not ready yet, try again")
+            return
+        }
+        val missing = _uiState.value.downloads.filter {
+            it.status == com.example.data.local.DownloadStatus.COMPLETED.name &&
+                it.subtitleFilePath.isNullOrBlank()
+        }
+        if (missing.isEmpty()) {
+            showFeedback("All downloads already have subtitles")
+            return
+        }
+        showFeedback("Fetching subtitles for ${missing.size} ${if (missing.size == 1) "title" else "titles"}…")
+        missing.forEach { dm.fetchSubtitlesForDownload(it.id) }
+    }
+
     private companion object {
-        const val HISTORY_LIMIT = 50
-        const val HISTORY_SAVE_INTERVAL_MILLIS = 10_000L
+        const val SKIP_LOG_TAG = "SkipSegments"
+        const val HISTORY_LIMIT = 200
+        const val HISTORY_SAVE_INTERVAL_MILLIS = 3_000L
         const val COMPLETION_REMAINING_SECONDS = 15L
         const val MIN_RELIABLE_DURATION_SECONDS = 30L
+        /** Trailing window for the synthetic TV "Next Episode" pill (mirrors Up-Next). */
+        const val TRAILING_NEXT_EPISODE_WINDOW_SEC = 60.0
+        const val TRAILING_NEXT_EPISODE_MIN_DURATION_SEC = 61.0
         const val RESUME_RESET_TOLERANCE_SECONDS = 2L
+        /** Placeholder-snapshot guard only applies to fresh loads. */
+        const val LOAD_FRESH_WINDOW_MILLIS = 5_000L
         const val SEARCH_CACHE_TTL_MILLIS = 7L * 24L * 60L * 60L * 1000L
         const val MAX_QUEUE_SIZE = 50
     }
@@ -2340,13 +3022,8 @@ private fun isProfileImageReference(value: String): Boolean {
         normalized.startsWith("data:image/")
 }
 
-private fun recentHistoryGroupKey(entry: WatchHistoryEntry): String {
-    val video = entry.video
-    val contentId = listOf(video.tmdbId, video.imdbId, video.id)
-        .firstOrNull { !it.isNullOrBlank() }
-        ?.trim()
-        ?.lowercase()
-        .orEmpty()
-        .ifBlank { entry.key }
-    return "${video.mediaType.name.lowercase()}:$contentId"
-}
+private fun recentHistoryGroupKey(entry: WatchHistoryEntry): String =
+    // Single grouping rule shared with the shelf, feed dedupe, and progress
+    // lookups, so Recent cards can never disagree with Search about which
+    // entries belong to the same title.
+    entry.titleGroupKey()

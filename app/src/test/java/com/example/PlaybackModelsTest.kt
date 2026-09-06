@@ -4,9 +4,13 @@ import com.example.model.MediaType
 import com.example.model.VideoItem
 import com.example.model.WatchHistoryEntry
 import com.example.model.deduplicateContinueWatching
+import com.example.model.findProgressEntry
 import com.example.model.playbackKey
+import com.example.model.resumePositionSeconds
+import com.example.model.toContinueUiModels
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -92,6 +96,97 @@ class PlaybackModelsTest {
 
         assertEquals(1, shelf.size)
         assertEquals(2, shelf.single().video.currentEpisode)
+    }
+
+    @Test
+    fun `resume rewinds ten seconds and restarts barely started titles`() {
+        val mid = WatchHistoryEntry(
+            key = "k1",
+            video = testVideo(),
+            positionSeconds = 100,
+            durationSeconds = 600
+        )
+        val early = mid.copy(positionSeconds = 10)
+        val done = mid.copy(completed = true)
+
+        assertEquals(90.0, mid.resumePositionSeconds(), 0.001)
+        assertEquals(0.0, early.resumePositionSeconds(), 0.001)
+        assertEquals(0.0, done.resumePositionSeconds(), 0.001)
+    }
+
+    @Test
+    fun `shelf models coerce episode numbers and share one label format`() {
+        val zeroEpisode = testVideo(
+            mediaType = MediaType.TV_SHOW,
+            tmdbId = "show-7",
+            season = 0,
+            episode = 0
+        )
+        val entry = WatchHistoryEntry(
+            key = zeroEpisode.playbackKey(),
+            video = zeroEpisode,
+            positionSeconds = 60,
+            durationSeconds = 600,
+            lastWatchedAtMillis = 5
+        )
+
+        val models = listOf(entry).toContinueUiModels()
+
+        assertEquals(1, models.size)
+        assertEquals(1, models.single().displaySeason)
+        assertEquals(1, models.single().displayEpisode)
+        assertEquals("S1:E1 • 9:00 left", models.single().label)
+    }
+
+    @Test
+    fun `shelf models hide zero progress ghosts`() {
+        val ghost = WatchHistoryEntry(
+            key = testVideo().playbackKey(),
+            video = testVideo(),
+            positionSeconds = 0,
+            durationSeconds = 600,
+            lastWatchedAtMillis = 5
+        )
+
+        assertTrue(listOf(ghost).toContinueUiModels().isEmpty())
+    }
+
+    @Test
+    fun `progress lookup prefers exact episode then series latest, never oldest`() {
+        val base = testVideo(mediaType = MediaType.TV_SHOW, tmdbId = "show-9")
+        val old = WatchHistoryEntry(
+            key = base.copy(currentEpisode = 1).playbackKey(),
+            video = base.copy(currentEpisode = 1),
+            positionSeconds = 50,
+            durationSeconds = 100,
+            lastWatchedAtMillis = 100
+        )
+        val latest = WatchHistoryEntry(
+            key = base.copy(currentEpisode = 3).playbackKey(),
+            video = base.copy(currentEpisode = 3),
+            positionSeconds = 10,
+            durationSeconds = 100,
+            lastWatchedAtMillis = 300
+        )
+        val entries = listOf(latest, old)
+
+        // Exact S:E hit.
+        assertEquals(
+            3,
+            findProgressEntry(base.copy(currentEpisode = 3), entries)?.video?.currentEpisode
+        )
+        assertEquals(
+            1,
+            findProgressEntry(base.copy(currentEpisode = 1), entries)?.video?.currentEpisode
+        )
+        // A catalog card with no entry of its own resolves to the
+        // series-latest resume point instead of nothing.
+        assertEquals(
+            3,
+            findProgressEntry(base.copy(currentEpisode = 2), entries)?.video?.currentEpisode
+        )
+        // Unknown title resolves to nothing instead of a stranger's progress.
+        assertNull(findProgressEntry(testVideo(tmdbId = "other"), entries))
     }
 
     private fun testVideo(

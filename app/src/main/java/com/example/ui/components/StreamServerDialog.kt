@@ -12,7 +12,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
@@ -20,6 +24,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,7 +36,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,9 +74,10 @@ fun StreamServerDialog(
         }
     }
 
+    val haptics = LocalHapticFeedback.current
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF101010),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         dragHandle = null
     ) {
         Column(
@@ -80,11 +92,27 @@ fun StreamServerDialog(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("Choose server", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text("Select where you want to play", color = Color.White.copy(alpha = 0.58f), fontSize = 12.sp)
+                    Text(
+                        "Choose server",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Select where you want to play",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                        fontSize = 12.sp
+                    )
                 }
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White.copy(alpha = 0.8f))
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Close server picker",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
@@ -94,9 +122,10 @@ fun StreamServerDialog(
                 title = "VidSrc",
                 subtitle = "Fast adaptive playback",
                 selected = currentServerId == StreamService.VIDSRC_SERVER_ID,
-                accent = Color(0xFFFF0000),
+                accent = MaterialTheme.colorScheme.primary,
                 icon = Icons.Default.Tune,
                 onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     onSelectServer(StreamService.VIDSRC_SERVER_ID)
                     onDismiss()
                 }
@@ -106,9 +135,10 @@ fun StreamServerDialog(
                 title = "VidLink",
                 subtitle = "High-quality backup stream",
                 selected = currentServerId == StreamService.VIDLINK_SERVER_ID,
-                accent = Color(0xFFFF0000),
+                accent = MaterialTheme.colorScheme.primary,
                 icon = Icons.Default.PlayArrow,
                 onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     onSelectServer(StreamService.VIDLINK_SERVER_ID)
                     onDismiss()
                 }
@@ -120,49 +150,117 @@ fun StreamServerDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
-                        .clickable { showVidSrcDomains = !showVidSrcDomains }
-                        .padding(vertical = 8.dp),
+                        .clickable(
+                            role = Role.Button,
+                            onClickLabel = if (showVidSrcDomains) "Hide VidSrc domains" else "Change VidSrc domain",
+                            onClick = { showVidSrcDomains = !showVidSrcDomains }
+                        )
+                        .padding(vertical = 12.dp)
+                        .heightIn(min = 48.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("VidSrc domain", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Preferred: ${domainOrder.firstOrNull() ?: currentVidSrcServerHost}", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
+                        Text(
+                            "VidSrc domain",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Preferred: ${domainOrder.firstOrNull() ?: currentVidSrcServerHost}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                            fontSize = 11.sp
+                        )
                     }
-                    Text(if (showVidSrcDomains) "Hide" else "Change", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                    Text(
+                        if (showVidSrcDomains) "Hide" else "Change",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp
+                    )
                 }
                 if (showVidSrcDomains) {
                     domainOrder.forEachIndexed { index, host ->
+                        val isActive = host == currentVidSrcServerHost
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(if (host == currentVidSrcServerHost) Color.White.copy(alpha = 0.08f) else Color.Transparent)
-                                .clickable {
-                                    onSelectVidSrcServer(host)
-                                    onSelectServer(StreamService.VIDSRC_SERVER_ID)
-                                }
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                                .background(
+                                    if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                    else Color.Transparent
+                                )
+                                .clickable(
+                                    role = Role.RadioButton,
+                                    onClickLabel = "Use $host",
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onSelectVidSrcServer(host)
+                                        onSelectServer(StreamService.VIDSRC_SERVER_ID)
+                                    }
+                                )
+                                .semantics { selected = isActive }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                .heightIn(min = 48.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(host, color = Color.White, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                            Text(if (host == currentVidSrcServerHost) "Active" else "", color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp)
-                            IconButton(onClick = { moveDomain(index, -1) }, enabled = index > 0, modifier = Modifier.size(28.dp)) {
-                                Text("↑", color = if (index > 0) Color.White else Color.White.copy(alpha = 0.2f), fontSize = 16.sp)
+                            Text(
+                                host,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                if (isActive) "Active" else "",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 10.sp
+                            )
+                            IconButton(
+                                onClick = { moveDomain(index, -1) },
+                                enabled = index > 0,
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.ArrowUpward,
+                                    contentDescription = "Move $host up",
+                                    tint = if (index > 0) MaterialTheme.colorScheme.onSurface
+                                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
-                            IconButton(onClick = { moveDomain(index, 1) }, enabled = index < domainOrder.lastIndex, modifier = Modifier.size(28.dp)) {
-                                Text("↓", color = if (index < domainOrder.lastIndex) Color.White else Color.White.copy(alpha = 0.2f), fontSize = 16.sp)
+                            IconButton(
+                                onClick = { moveDomain(index, 1) },
+                                enabled = index < domainOrder.lastIndex,
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.ArrowDownward,
+                                    contentDescription = "Move $host down",
+                                    tint = if (index < domainOrder.lastIndex) MaterialTheme.colorScheme.onSurface
+                                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
                         }
                     }
                     if (domainOrder != StreamService.normalizeVidSrcServerOrder(vidSrcServerOrder)) {
                         Text(
                             "Save domain order",
-                            color = Color(0xFFFF0000),
+                            color = MaterialTheme.colorScheme.primary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier
-                                .clickable { onSaveVidSrcServerOrder(domainOrder) }
-                                .padding(start = 10.dp, top = 7.dp, bottom = 3.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(
+                                    role = Role.Button,
+                                    onClickLabel = "Save domain order",
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onSaveVidSrcServerOrder(domainOrder)
+                                    }
+                                )
+                                .padding(horizontal = 10.dp, vertical = 12.dp)
+                                .heightIn(min = 48.dp)
+                                .sizeIn(minWidth = 48.dp)
                         )
                     }
                 }
@@ -171,7 +269,7 @@ fun StreamServerDialog(
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 "YouTube player design • volume uses your device controls",
-                color = Color.White.copy(alpha = 0.42f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
             )
@@ -192,17 +290,44 @@ private fun StreamProviderRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.045f))
-            .border(1.dp, if (selected) accent else Color.White.copy(alpha = 0.10f), RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 13.dp),
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+            )
+            .border(
+                1.dp,
+                if (selected) accent else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                RoundedCornerShape(12.dp)
+            )
+            .clickable(
+                role = Role.RadioButton,
+                onClickLabel = "Use $title",
+                onClick = onClick
+            )
+            .semantics { this.selected = selected }
+            .padding(horizontal = 14.dp, vertical = 13.dp)
+            .heightIn(min = 56.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, tint = if (selected) accent else Color.White.copy(alpha = 0.72f), modifier = Modifier.size(21.dp))
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(21.dp)
+        )
         Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-            Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
+            Text(
+                title,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                subtitle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp
+            )
         }
-        if (selected) Icon(Icons.Default.Check, contentDescription = "Selected", tint = accent, modifier = Modifier.size(20.dp))
+        if (selected) Icon(Icons.Default.Check, contentDescription = "$title selected", tint = accent, modifier = Modifier.size(20.dp))
     }
 }
