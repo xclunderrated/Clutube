@@ -1,6 +1,7 @@
 package com.example.data.torrent
 
 import com.example.data.model.TorrentSource
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -74,6 +75,16 @@ object TorrentIndexerService {
      * indexers (see TorrentSourceRegistry). Pass [enabledIndexers] to honor
      * user-disabled sources; null/empty means all.
      */
+    /**
+     * Partitioned TV result: exact single-episode torrents vs packs that may
+     * contain the episode. Auto-download only ever uses [exact]; the picker
+     * surfaces [packs] in a separate collapsed section for manual file-pick.
+     */
+    data class TvTorrentResult(
+        val exact: List<TorrentSource>,
+        val packs: List<TorrentSource>
+    )
+
     suspend fun resolveMovieTorrents(
         imdbId: String?,
         title: String,
@@ -84,38 +95,48 @@ object TorrentIndexerService {
         val resolvedImdb = resolveImdbId(imdbId, isMovie = true) ?: imdbId
         val enabled = enabledIndexers?.map { it.trim().lowercase() }?.toSet().orEmpty()
         fun on(id: String) = enabled.isEmpty() || id.lowercase() in enabled
+        // Canonical query title: strip " (YEAR)" suffix so "Dune (2024) 2024"
+        // duplication can never happen; year is appended once below.
+        val cleanQueryTitle = TorrentMatcher.queryTitle(title).ifBlank { title.trim() }
+        val cleanYear = year?.trim()?.takeIf { it.matches(Regex(".*(19\\d{2}|20\\d{2}).*")) }
+            ?.let { Regex("(19\\d{2}|20\\d{2})").find(it)?.groupValues?.get(1) ?: it.take(4) }
+            ?: TorrentMatcher.extractYear(year)
 
-        val deferredList = listOfNotNull(
+        val deferredList: List<Deferred<List<TorrentSource>>> = listOfNotNull(
             // 1. Torrentio Stremio aggregator (aggregates 1337x, TorrentGalaxy, YTS, RARBG, TPB)
             if (on(TorrentSourceRegistry.TORRENTIO)) async {
                 if (!resolvedImdb.isNullOrBlank()) {
-                    fetchTorrentioMovieTorrents(resolvedImdb, title)
+                    fetchTorrentioMovieTorrents(resolvedImdb, cleanQueryTitle)
                 } else emptyList()
             } else null,
-            // 2. YTS by IMDb or title (with mirror fallback)
+            // 2. YTS by IMDb or title (with mirror fallback + title/year verify)
             if (on(TorrentSourceRegistry.YTS)) async {
-                val queryTerm = resolvedImdb?.takeIf { it.isNotBlank() } ?: title
-                fetchYtsTorrents(queryTerm, title)
+                val queryTerm = resolvedImdb?.takeIf { it.isNotBlank() } ?: cleanQueryTitle
+                fetchYtsTorrents(queryTerm, cleanQueryTitle, cleanYear)
             } else null,
             // 3. ThePirateBay (Apibay)
             if (on(TorrentSourceRegistry.PIRATE_BAY)) async {
-                val pbQuery = if (!year.isNullOrBlank()) "$title $year" else title
+                val pbQuery = if (!cleanYear.isNullOrBlank()) "$cleanQueryTitle $cleanYear" else cleanQueryTitle
                 fetchPirateBayTorrents(pbQuery, isMovie = true)
+                    .filter { TorrentMatcher.matchMovie(it.title, cleanQueryTitle, cleanYear) }
             } else null,
             // 4. SolidTorrents DHT index
             if (on(TorrentSourceRegistry.SOLID_TORRENTS)) async {
-                val q = if (!year.isNullOrBlank()) "$title $year" else title
+                val q = if (!cleanYear.isNullOrBlank()) "$cleanQueryTitle $cleanYear" else cleanQueryTitle
                 fetchSolidTorrents(q)
+                    .filter { TorrentMatcher.matchMovie(it.title, cleanQueryTitle, cleanYear) }
             } else null,
             // 5. Nyaa RSS
             if (on(TorrentSourceRegistry.NYAA)) async {
-                val q = if (!year.isNullOrBlank()) "$title $year" else title
+                val q = if (!cleanYear.isNullOrBlank()) "$cleanQueryTitle $cleanYear" else cleanQueryTitle
                 fetchNyaaTorrents(q)
+                    .filter { TorrentMatcher.matchMovie(it.title, cleanQueryTitle, cleanYear) }
             } else null,
             // 6. AnimeTosho JSON feed
             if (on(TorrentSourceRegistry.ANIME_TOSHO)) async {
-                val q = if (!year.isNullOrBlank()) "$title $year" else title
+                val q = if (!cleanYear.isNullOrBlank()) "$cleanQueryTitle $cleanYear" else cleanQueryTitle
                 fetchAnimeToshoTorrents(q)
+                    .filter { TorrentMatcher.matchMovie(it.title, cleanQueryTitle, cleanYear) }
             } else null
         )
 
@@ -143,31 +164,52 @@ object TorrentIndexerService {
         seasonNumber: Int? = null,
         episodeNumber: Int? = null,
         enabledIndexers: Set<String>? = null
-    ): List<TorrentSource> = withContext(Dispatchers.IO) {
-        val results = mutableListOf<TorrentSource>()
-        val season = seasonNumber ?: 1
-        val episode = episodeNumber ?: 1
+    ): List<TorrentSource> = resolveTvTorrentsPartitioned(
+        imdbId, showTitle, seasonNumber, episodeNumber, enabledIndexers
+    ).exact
+
+    /**
+     * Strict partitioned resolution: generic indexers (TPB/Solid/Nyaa/Tosho)
+     * are filtered to EXACT S/E release names; Torrentio + EZTV are trusted
+     * exact by construction (imdb:S:E endpoint / S-E filtered API). Anything
+     * else (packs, ranges, wrong episodes) lands in [TvTorrentResult.packs]
+     * or is dropped, so auto-pick can never grab a random episode.
+     */
+    suspend fun resolveTvTorrentsPartitioned(
+        imdbId: String?,
+        showTitle: String,
+        seasonNumber: Int? = null,
+        episodeNumber: Int? = null,
+        enabledIndexers: Set<String>? = null
+    ): TvTorrentResult = withContext(Dispatchers.IO) {
+        val season = (seasonNumber ?: 1).coerceAtLeast(1)
+        val episode = (episodeNumber ?: 1).coerceAtLeast(1)
 
         val resolvedImdb = resolveImdbId(imdbId, isMovie = false) ?: imdbId
         val enabled = enabledIndexers?.map { it.trim().lowercase() }?.toSet().orEmpty()
         fun on(id: String) = enabled.isEmpty() || id.lowercase() in enabled
         val epCode = "S%02dE%02d".format(season, episode)
-        val cleanTitle = showTitle.replace(Regex("[^a-zA-Z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
+        val cleanTitle = TorrentMatcher.queryTitle(showTitle)
 
-        val deferredList = listOfNotNull(
-            // 1. Torrentio Series aggregator
+        // Trusted-exact indexers: no name filtering needed.
+        val trustedDeferred: List<Deferred<List<TorrentSource>>> = listOfNotNull(
+            // 1. Torrentio Series aggregator (exact imdb:S:E endpoint)
             if (on(TorrentSourceRegistry.TORRENTIO)) async {
                 if (!resolvedImdb.isNullOrBlank()) {
-                    fetchTorrentioTvTorrents(resolvedImdb, showTitle, season, episode)
+                    fetchTorrentioTvTorrents(resolvedImdb, cleanTitle, season, episode)
                 } else emptyList()
             } else null,
-            // 2. EZTV if numeric IMDb ID available
+            // 2. EZTV if numeric IMDb ID available (S/E filtered server-side)
             if (on(TorrentSourceRegistry.EZTV)) async {
-                val numericImdb = resolvedImdb?.removePrefix("tt")?.toIntOrNull()
+                val numericImdb = resolvedImdb?.removePrefix("tt")?.removePrefix("TT")?.toIntOrNull()
                 if (numericImdb != null) {
                     fetchEztvTorrents(numericImdb, season, episode)
                 } else emptyList()
-            } else null,
+            } else null
+        )
+
+        // Untrusted generic indexers: must prove EXACT via release-name match.
+        val genericDeferred: List<Deferred<List<TorrentSource>>> = listOfNotNull(
             // 3. ThePirateBay (Apibay)
             if (on(TorrentSourceRegistry.PIRATE_BAY)) async {
                 fetchPirateBayTorrents("$cleanTitle $epCode", isMovie = false, season, episode)
@@ -186,15 +228,32 @@ object TorrentIndexerService {
             } else null
         )
 
+        val exact = mutableListOf<TorrentSource>()
+        val packs = mutableListOf<TorrentSource>()
         withTimeoutOrNull(9000) {
-            val fetched = deferredList.awaitAll()
-            fetched.forEach { list ->
-                val existingHashes = results.map { it.infoHash.lowercase() }.toSet()
-                results.addAll(list.filterNot { it.infoHash.lowercase() in existingHashes })
+            val trusted = trustedDeferred.awaitAll()
+            val generic = genericDeferred.awaitAll()
+            val seen = mutableSetOf<String>()
+            fun addUnique(dst: MutableList<TorrentSource>, src: TorrentSource) {
+                val h = src.infoHash.lowercase()
+                if (seen.add(h)) dst.add(src)
             }
+            trusted.forEach { list -> (list ?: emptyList()).forEach { addUnique(exact, it) } }
+            generic.forEach { list -> (list ?: emptyList()).forEach { src ->
+                when (TorrentMatcher.matchEpisode(src.title, season, episode).kind) {
+                    EpisodeMatch.EXACT -> addUnique(exact, src)
+                    EpisodeMatch.PACK_SEASON,
+                    EpisodeMatch.PACK_COMPLETE,
+                    EpisodeMatch.MULTI -> addUnique(packs, src)
+                    EpisodeMatch.WRONG -> Unit // drop: wrong episode, never surface
+                }
+            } }
         }
 
-        results.sortedByDescending { it.seeders }
+        TvTorrentResult(
+            exact = exact.sortedByDescending { it.seeders },
+            packs = packs.sortedByDescending { it.seeders }
+        )
     }
 
     /**
@@ -338,15 +397,24 @@ object TorrentIndexerService {
 
     private val YTS_MIRRORS = listOf("https://yts.mx", "https://yts.am")
 
-    private fun fetchYtsTorrents(queryTerm: String, movieTitle: String): List<TorrentSource> {
+    private fun fetchYtsTorrents(
+        queryTerm: String,
+        movieTitle: String,
+        movieYear: String? = null
+    ): List<TorrentSource> {
         for (mirror in YTS_MIRRORS) {
-            val found = fetchYtsFromMirror(mirror, queryTerm, movieTitle)
+            val found = fetchYtsFromMirror(mirror, queryTerm, movieTitle, movieYear)
             if (found.isNotEmpty()) return found
         }
         return emptyList()
     }
 
-    private fun fetchYtsFromMirror(mirror: String, queryTerm: String, movieTitle: String): List<TorrentSource> {
+    private fun fetchYtsFromMirror(
+        mirror: String,
+        queryTerm: String,
+        movieTitle: String,
+        movieYear: String? = null
+    ): List<TorrentSource> {
         val list = mutableListOf<TorrentSource>()
         try {
             val encodedQuery = URLEncoder.encode(queryTerm, StandardCharsets.UTF_8.name())
@@ -367,6 +435,23 @@ object TorrentIndexerService {
 
             for (i in 0 until movies.length()) {
                 val movie = movies.getJSONObject(i)
+                // Strict verify: YTS fuzzy search can return unrelated same-word
+                // titles ("Avatar" -> many Avatar movies). Only keep the
+                // closest title/year match so a random movie is never queued.
+                val ytsTitle = movie.optString("title_english")
+                    .ifBlank { movie.optString("title", "") }
+                val ytsYear = movie.optInt("year", 0).takeIf { it > 1900 }?.toString()
+                if (!TorrentMatcher.matchMovie(
+                        "$ytsTitle ${ytsYear ?: ""}",
+                        movieTitle,
+                        movieYear ?: ytsYear
+                    ) && i > 0
+                ) {
+                    // Keep first result only when IMDb id drove the query
+                    // (queryTerm looks like tt1234567); otherwise skip fuzzy extras.
+                    val imdbDriven = queryTerm.trim().startsWith("tt", ignoreCase = true)
+                    if (!imdbDriven) continue
+                }
                 val torrents = movie.optJSONArray("torrents") ?: continue
 
                 for (j in 0 until torrents.length()) {
@@ -430,7 +515,10 @@ object TorrentIndexerService {
             if (body.startsWith("{\"") || body == "No results returned") return emptyList()
 
             val array = JSONArray(body)
-            for (i in 0 until array.length().coerceAtMost(8)) {
+            // Wider pool (15): exact S/E filtering happens at the caller, so
+            // a wrong-episode result in the top 8 must not crowd out the exact
+            // match sitting at position 9-15.
+            for (i in 0 until array.length().coerceAtMost(15)) {
                 val item = array.getJSONObject(i)
                 val id = item.optString("id")
                 if (id == "0" || id.isBlank()) continue

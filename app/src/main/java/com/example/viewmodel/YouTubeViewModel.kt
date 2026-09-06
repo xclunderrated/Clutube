@@ -149,6 +149,8 @@ data class YouTubeUiState(
     val showAddMagnetDialog: Boolean = false,
     val showTorrentSourceDialog: Boolean = false,
     val torrentSources: List<TorrentSource> = emptyList(),
+    /** Season/complete packs for the requested S/E (manual file-pick only). */
+    val torrentPacks: List<TorrentSource> = emptyList(),
     val isLoadingTorrentSources: Boolean = false,
     val selectedTorrentMedia: VideoItem? = null,
     val selectedTorrentSeason: Int? = null,
@@ -2745,22 +2747,50 @@ class YouTubeViewModel : ViewModel() {
                 showFeedback("Queued S${target.episode.seasonNumber}:E${target.episode.episodeNumber} (${source.quality} · ${source.provider})")
             }
             is com.example.ui.components.DownloadTarget.Season -> {
-                // NOTE: one hand-picked torrent must never be cloned across
-                // episodes (same bytes behind N labels = wrong-episode
-                // playback). Each episode keeps its own torrent; the per-
-                // episode auto path above is the correct bulk route.
+                // One hand-picked torrent must never be cloned across episodes
+                // (same bytes behind N labels = wrong-episode playback).
+                // Only reuse it when it is a pack that actually contains each
+                // episode; otherwise resolve each episode independently.
                 val seasonEpisodes = target.episodes.filter { it.seasonNumber == target.seasonNumber }
-                seasonEpisodes.forEach { ep ->
-                    downloadManager?.downloadTorrent(
-                        video = target.video,
-                        source = source.copy(season = target.seasonNumber, episode = ep.episodeNumber),
-                        season = target.seasonNumber,
-                        episode = ep.episodeNumber,
-                        episodeTitle = ep.name,
-                        episodeStillUrl = ep.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
-                    )
+                val dm = downloadManager
+                val enabled = enabledTorrentIndexers()
+                val isPackForAll = seasonEpisodes.isNotEmpty() && seasonEpisodes.all { ep ->
+                    val kind = com.example.data.torrent.TorrentMatcher
+                        .matchEpisode(source.title, target.seasonNumber, ep.episodeNumber).kind
+                    kind == com.example.data.torrent.EpisodeMatch.PACK_SEASON ||
+                        kind == com.example.data.torrent.EpisodeMatch.PACK_COMPLETE ||
+                        kind == com.example.data.torrent.EpisodeMatch.MULTI ||
+                        kind == com.example.data.torrent.EpisodeMatch.EXACT
                 }
-                showFeedback("Queued Season ${target.seasonNumber} (${seasonEpisodes.size} episodes · ${source.quality})")
+                if (isPackForAll) {
+                    seasonEpisodes.forEach { ep ->
+                        dm?.downloadTorrent(
+                            video = target.video,
+                            source = source.copy(season = target.seasonNumber, episode = ep.episodeNumber),
+                            season = target.seasonNumber,
+                            episode = ep.episodeNumber,
+                            episodeTitle = ep.name,
+                            episodeStillUrl = ep.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+                        )
+                    }
+                    showFeedback("Queued Season ${target.seasonNumber} pack for ${seasonEpisodes.size} episodes (${source.quality})")
+                } else if (dm != null) {
+                    // Independent per-episode exact resolution — the only safe
+                    // bulk route for single-episode torrents.
+                    showFeedback("Resolving exact torrents for ${seasonEpisodes.size} episodes…")
+                    seasonEpisodes.forEach { ep ->
+                        dm.autoDownloadBestTorrent(
+                            video = target.video,
+                            requestedQuality = source.quality,
+                            season = target.seasonNumber,
+                            episode = ep.episodeNumber,
+                            onResult = null,
+                            enabledIndexers = enabled,
+                            episodeTitle = ep.name,
+                            episodeStillUrl = ep.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+                        )
+                    }
+                }
             }
         }
     }
@@ -2787,7 +2817,8 @@ class YouTubeViewModel : ViewModel() {
                 selectedTorrentEpisode = episode,
                 showTorrentSourceDialog = true,
                 isLoadingTorrentSources = true,
-                torrentSources = emptyList()
+                torrentSources = emptyList(),
+                torrentPacks = emptyList()
             )
         }
         loadTorrentSources(video, season, episode)
@@ -2796,29 +2827,41 @@ class YouTubeViewModel : ViewModel() {
     fun loadTorrentSources(video: VideoItem, season: Int? = null, episode: Int? = null) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingTorrentSources = true) }
-            val year = video.releaseDateFormatted?.take(4)
+            val year = com.example.data.torrent.TorrentMatcher.extractYear(
+                video.releaseDateFormatted, video.releaseDateIso
+            )
             val enabled = enabledTorrentIndexers()
-            val sources = if (video.mediaType == MediaType.TV_SHOW) {
-                TorrentIndexerService.resolveTvTorrents(
+            if (video.mediaType == MediaType.TV_SHOW) {
+                // Partitioned: exact singles vs packs. Auto paths use exact
+                // only; the dialog shows packs separately for file-pick.
+                val result = TorrentIndexerService.resolveTvTorrentsPartitioned(
                     imdbId = video.imdbId ?: video.tmdbId,
                     showTitle = video.title,
                     seasonNumber = season,
                     episodeNumber = episode,
                     enabledIndexers = enabled
                 )
+                _uiState.update {
+                    it.copy(
+                        torrentSources = result.exact,
+                        torrentPacks = result.packs,
+                        isLoadingTorrentSources = false
+                    )
+                }
             } else {
-                TorrentIndexerService.resolveMovieTorrents(
+                val sources = TorrentIndexerService.resolveMovieTorrents(
                     imdbId = video.imdbId ?: video.tmdbId,
                     title = video.title,
                     year = year,
                     enabledIndexers = enabled
                 )
-            }
-            _uiState.update {
-                it.copy(
-                    torrentSources = sources,
-                    isLoadingTorrentSources = false
-                )
+                _uiState.update {
+                    it.copy(
+                        torrentSources = sources,
+                        torrentPacks = emptyList(),
+                        isLoadingTorrentSources = false
+                    )
+                }
             }
         }
     }
@@ -2828,6 +2871,17 @@ class YouTubeViewModel : ViewModel() {
         // offline player can label this exact S/E — never a stale title.
         val safeSeason = (season ?: source.season ?: 1).coerceAtLeast(1)
         val safeEpisode = (episode ?: source.episode ?: 1).coerceAtLeast(1)
+        // Last-line guard: a WRONG-episode torrent must never queue, even via
+        // manual tap (stale list race). Packs are allowed — the engine
+        // extracts the matching inner file; exact singles pass through.
+        if (video.mediaType == MediaType.TV_SHOW) {
+            val kind = com.example.data.torrent.TorrentMatcher
+                .matchEpisode(source.title, safeSeason, safeEpisode).kind
+            if (kind == com.example.data.torrent.EpisodeMatch.WRONG) {
+                showFeedback("That torrent is not S${safeSeason}:E${safeEpisode} — pick an EXACT or pack result")
+                return
+            }
+        }
         val matching = _uiState.value.tvEpisodes.firstOrNull {
             it.seasonNumber == safeSeason && it.episodeNumber == safeEpisode
         }

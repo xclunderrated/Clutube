@@ -1158,8 +1158,13 @@ fun YouTubeApp(
             )
         }
 
-        // Torrent Swarm Source Selector Dialog
+        // Torrent Swarm Source Selector Dialog (exact matches + packs, real S/E)
         if (uiState.showTorrentSourceDialog && uiState.selectedTorrentMedia != null) {
+            val selSeason = uiState.selectedTorrentSeason ?: 1
+            val selEpisode = uiState.selectedTorrentEpisode ?: 1
+            val realSeasons = (1..uiState.totalSeasons.coerceAtLeast(1).coerceAtMost(60)).toList()
+            val seasonEps = uiState.tvEpisodes.filter { it.seasonNumber == selSeason }
+                .map { it.episodeNumber }.distinct().sorted()
             com.example.ui.components.TorrentSourceDialog(
                 video = uiState.selectedTorrentMedia!!,
                 sources = uiState.torrentSources,
@@ -1180,7 +1185,13 @@ fun YouTubeApp(
                         episode = uiState.selectedTorrentEpisode
                     )
                 },
-                onDismiss = { viewModel.setShowTorrentSourceDialog(false) }
+                onDismiss = { viewModel.setShowTorrentSourceDialog(false) },
+                packs = uiState.torrentPacks,
+                availableSeasons = realSeasons,
+                availableEpisodeNumbers = seasonEps.ifEmpty { (1..24).toList() },
+                requestedEpCode = if (uiState.selectedTorrentMedia!!.mediaType == com.example.model.MediaType.TV_SHOW) {
+                    "S%02dE%02d".format(selSeason, selEpisode)
+                } else null
             )
         }
 

@@ -388,6 +388,36 @@ class DownloadManager private constructor(private val context: Context) {
             val isTv = video.mediaType == MediaType.TV_SHOW
             val safeSeason = (season ?: 1).coerceAtLeast(1)
             val safeEpisode = (episode ?: 1).coerceAtLeast(1)
+            // Strict guard: WRONG-episode torrents never queue (packs + exact
+            // pass; engine extracts the right inner file from packs).
+            if (isTv) {
+                val kind = com.example.data.torrent.TorrentMatcher
+                    .matchEpisode(source.title, safeSeason, safeEpisode).kind
+                if (kind == com.example.data.torrent.EpisodeMatch.WRONG) {
+                    val downloadId = episodeDownloadId(tmdbId, safeSeason, safeEpisode)
+                    dao.insertOrUpdate(
+                        DownloadEntity(
+                            id = downloadId,
+                            tmdbId = tmdbId,
+                            mediaType = video.mediaType.name,
+                            title = "${video.title} - S${safeSeason}:E${safeEpisode}",
+                            seriesTitle = video.title,
+                            seasonNumber = safeSeason,
+                            episodeNumber = safeEpisode,
+                            downloadUrl = "",
+                            localFilePath = File(
+                                downloadsDir,
+                                "tv_${tmdbId}_S${safeSeason}E${safeEpisode}.mp4"
+                            ).absolutePath,
+                            status = DownloadStatus.FAILED.name,
+                            errorMessage = "Blocked: torrent is not S${safeSeason}:E${safeEpisode} (${source.title.take(60)})",
+                            quality = source.quality,
+                            serverName = "Torrent (${source.provider})"
+                        )
+                    )
+                    return@launch
+                }
+            }
             // Deterministic id: same episode always maps to the same row,
             // regardless of which torrent (quality/provider) served it.
             val downloadId = if (isTv) {
@@ -1049,7 +1079,9 @@ class DownloadManager private constructor(private val context: Context) {
                         torrentBytes = torrentBytes,
                         downloadId = download.id,
                         savePath = stagingDir,
-                        onProgress = onProgressCallback
+                        onProgress = onProgressCallback,
+                        expectedSeason = download.seasonNumber,
+                        expectedEpisode = download.episodeNumber
                     )
                 } else {
                     Log.w(TAG, "Torrent file fetch failed for ${download.id}, falling back to magnet")
@@ -1061,7 +1093,9 @@ class DownloadManager private constructor(private val context: Context) {
                     magnetUri = download.magnetUri,
                     downloadId = download.id,
                     savePath = stagingDir,
-                    onProgress = onProgressCallback
+                    onProgress = onProgressCallback,
+                    expectedSeason = download.seasonNumber,
+                    expectedEpisode = download.episodeNumber
                 )
             } else if (downloadedFile == null && download.downloadUrl.isNotBlank() && download.downloadUrl.startsWith("http", ignoreCase = true)) {
                 performChunkedDownload(download)

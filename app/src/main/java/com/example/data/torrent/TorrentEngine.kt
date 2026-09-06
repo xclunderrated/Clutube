@@ -53,6 +53,8 @@ object TorrentEngine {
     private var sessionManager: SessionManager? = null
     private var isInitialized = false
 
+    private data class VideoCandidate(val index: Int, val path: String, val size: Long)
+
     fun initialize(context: Context) {
         if (isInitialized) return
 
@@ -78,11 +80,21 @@ object TorrentEngine {
         Log.i(TAG, "TorrentEngine initialized successfully. Save path: ${defaultSavePath.absolutePath}")
     }
 
+    /** Parses "dl_tv_<tmdb>_s1_e2" -> (1, 2); nulls for movies/custom magnets. */
+    fun parseSeasonEpisode(downloadId: String): Pair<Int?, Int?> {
+        val m = Regex("_s(\\d+)_e(\\d+)").find(downloadId.lowercase())
+        return if (m != null) {
+            Pair(m.groupValues[1].toIntOrNull(), m.groupValues[2].toIntOrNull())
+        } else Pair(null, null)
+    }
+
     suspend fun downloadFromMagnet(
         magnetUri: String,
         downloadId: String,
         savePath: File,
-        onProgress: (TorrentProgress) -> Unit
+        onProgress: (TorrentProgress) -> Unit,
+        expectedSeason: Int? = null,
+        expectedEpisode: Int? = null
     ): File? = withContext(Dispatchers.IO) {
         val sm = sessionManager
         if (!isInitialized || sm == null) {
@@ -124,7 +136,9 @@ object TorrentEngine {
             }
 
             activeDownloads[downloadId] = handle
-            return@withContext processTorrent(handle, downloadId, savePath, onProgress)
+            return@withContext processTorrent(
+                handle, downloadId, savePath, onProgress, expectedSeason, expectedEpisode
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Error downloading from magnet", e)
             return@withContext null
@@ -135,7 +149,9 @@ object TorrentEngine {
         torrentBytes: ByteArray,
         downloadId: String,
         savePath: File,
-        onProgress: (TorrentProgress) -> Unit
+        onProgress: (TorrentProgress) -> Unit,
+        expectedSeason: Int? = null,
+        expectedEpisode: Int? = null
     ): File? = withContext(Dispatchers.IO) {
         val sm = sessionManager
         if (!isInitialized || sm == null) {
@@ -166,7 +182,9 @@ object TorrentEngine {
             }
 
             activeDownloads[downloadId] = handle
-            return@withContext processTorrent(handle, downloadId, savePath, onProgress)
+            return@withContext processTorrent(
+                handle, downloadId, savePath, onProgress, expectedSeason, expectedEpisode
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Error downloading from torrent file", e)
             return@withContext null
@@ -177,7 +195,9 @@ object TorrentEngine {
         handle: TorrentHandle,
         downloadId: String,
         savePath: File,
-        onProgress: (TorrentProgress) -> Unit
+        onProgress: (TorrentProgress) -> Unit,
+        expectedSeasonArg: Int? = null,
+        expectedEpisodeArg: Int? = null
     ): File? = withContext(Dispatchers.IO) {
         // A reused handle (retry path) may still be paused from a previous
         // pause/cancel; resume is idempotent on a running handle.
@@ -209,8 +229,16 @@ object TorrentEngine {
         var videoFilePath: String? = null
         var siblingSubtitleCount = 0
 
+        // Expected S/E: explicit args win, else parse "dl_tv_<tmdb>_s1_e2".
+        // Movies/custom magnets have nulls and keep largest-file behavior.
+        val parsedSe = parseSeasonEpisode(downloadId)
+        val wantSeason = (expectedSeasonArg ?: parsedSe.first)?.coerceAtLeast(1)
+        val wantEpisode = (expectedEpisodeArg ?: parsedSe.second)?.coerceAtLeast(1)
+
         val fileStorage = ti.files()
         val numFiles = ti.numFiles()
+
+        val videoCandidates = mutableListOf<VideoCandidate>()
 
         for (i in 0 until numFiles) {
             val path = fileStorage.filePath(i)
@@ -219,16 +247,50 @@ object TorrentEngine {
 
             handle.filePriority(i, Priority.IGNORE)
 
-            if (ext in videoExtensions && size > maxSize) {
-                maxSize = size
-                maxFileIndex = i
-                videoFileName = File(path).name
-                videoFilePath = path
+            if (ext in videoExtensions && size > 0) {
+                videoCandidates.add(VideoCandidate(i, path, size))
             } else if (ext in subtitleExtensions && size > 0 && size <= maxSiblingSubtitleBytes) {
                 // Download alongside the video; DownloadManager collects these
                 // from the staging dir after the video payload finalizes.
                 handle.filePriority(i, Priority.DEFAULT)
                 siblingSubtitleCount++
+            }
+        }
+
+        if (videoCandidates.isNotEmpty() && wantSeason != null && wantEpisode != null) {
+            // Pack-aware pick: prefer the inner file whose name matches S/E.
+            // A season pack's largest file is a *random* episode — never fall
+            // back to it silently. Fail fast so the row reports "pack without
+            // this episode" instead of playing the wrong bytes behind the label.
+            val exactInner = videoCandidates
+                .filter {
+                    TorrentMatcher.isExactEpisode(File(it.path).name, wantSeason, wantEpisode)
+                }
+                .maxByOrNull { it.size }
+            if (exactInner != null) {
+                maxFileIndex = exactInner.index
+                maxSize = exactInner.size
+                videoFileName = File(exactInner.path).name
+                videoFilePath = exactInner.path
+                Log.i(TAG, "Pack-aware pick S${wantSeason}E${wantEpisode}: $videoFileName (${maxSize} bytes)")
+            } else if (videoCandidates.size > 1) {
+                Log.e(TAG, "Torrent holds ${videoCandidates.size} videos but none matches S${wantSeason}E${wantEpisode} for $downloadId; refusing largest-file fallback")
+                return@withContext null
+            } else {
+                val only = videoCandidates.single()
+                maxFileIndex = only.index
+                maxSize = only.size
+                videoFileName = File(only.path).name
+                videoFilePath = only.path
+            }
+        } else {
+            for (c in videoCandidates) {
+                if (c.size > maxSize) {
+                    maxSize = c.size
+                    maxFileIndex = c.index
+                    videoFileName = File(c.path).name
+                    videoFilePath = c.path
+                }
             }
         }
 

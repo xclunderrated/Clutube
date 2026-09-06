@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -79,7 +80,14 @@ fun TorrentSourceDialog(
     onSeasonSelected: ((Int) -> Unit)? = null,
     onEpisodeSelected: ((Int?) -> Unit)? = null,
     onDownload: (TorrentSource) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** Season/complete packs for the requested S/E (manual file-pick only). */
+    packs: List<TorrentSource> = emptyList(),
+    /** Real seasons/episodes from TMDB; when empty, falls back to safe ranges. */
+    availableSeasons: List<Int> = emptyList(),
+    availableEpisodeNumbers: List<Int> = emptyList(),
+    /** e.g. "S01E02" — shown in the header so the target is unambiguous. */
+    requestedEpCode: String? = null
 ) {
     val context = LocalContext.current
 
@@ -213,8 +221,14 @@ fun TorrentSourceDialog(
                                 .horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            val seasonCount = video.totalSeasons.coerceAtLeast(selectedSeason ?: 1).coerceAtLeast(5)
-                            (1..seasonCount).forEach { seasonNum ->
+                            // Real seasons first; fallback keeps at least 5 so a
+                            // not-yet-loaded show can still be browsed.
+                            val seasons = availableSeasons.ifEmpty {
+                                val seasonCount = video.totalSeasons
+                                    .coerceAtLeast(selectedSeason ?: 1).coerceAtLeast(5)
+                                (1..seasonCount).toList()
+                            }
+                            seasons.forEach { seasonNum ->
                                 val isSelected = (selectedSeason ?: 1) == seasonNum
                                 FilterChip(
                                     selected = isSelected,
@@ -242,7 +256,8 @@ fun TorrentSourceDialog(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             val activeEp = selectedEpisode ?: 1
-                            (1..24).forEach { epNum ->
+                            val episodes = availableEpisodeNumbers.ifEmpty { (1..24).toList() }
+                            episodes.forEach { epNum ->
                                 val isSelected = activeEp == epNum
                                 FilterChip(
                                     selected = isSelected,
@@ -267,7 +282,11 @@ fun TorrentSourceDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "AUTHENTIC TORRENT SOURCES",
+                        text = if (requestedEpCode != null && video.mediaType == MediaType.TV_SHOW) {
+                            "EXACT MATCHES · $requestedEpCode"
+                        } else {
+                            "AUTHENTIC TORRENT SOURCES"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = YouTubeRed,
                         fontWeight = FontWeight.Bold,
@@ -282,7 +301,7 @@ fun TorrentSourceDialog(
                         )
                     } else {
                         Text(
-                            text = "${sources.size} found",
+                            text = "${sources.size} exact" + if (packs.isNotEmpty()) " · ${packs.size} packs" else "",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -357,17 +376,25 @@ fun TorrentSourceDialog(
                     list
                 }
 
-                // Sources List
+                // Sources List (exact only; packs live in their own section below)
                 if (visibleSources.isEmpty() && !isLoading) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
+                            .weight(1f, fill = packs.isEmpty())
                             .padding(24.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (sources.isEmpty()) "No verified torrent sources found for this release yet.\nYou can also paste a direct magnet link in Downloads."
+                            text = if (sources.isEmpty() && packs.isEmpty()) {
+                                if (requestedEpCode != null && video.mediaType == MediaType.TV_SHOW) {
+                                    "No exact $requestedEpCode torrent found yet.\nCheck the packs below or try another quality."
+                                } else {
+                                    "No verified torrent sources found for this release yet.\nYou can also paste a direct magnet link in Downloads."
+                                }
+                            } else if (sources.isEmpty()) {
+                                "No exact single-episode match — see season packs below.\nThe downloader extracts the right file from a pack."
+                            }
                             else "No sources match this resolution filter. Clear the filter or try Auto-download with another resolution.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -375,11 +402,11 @@ fun TorrentSourceDialog(
                             lineHeight = 18.sp
                         )
                     }
-                } else {
+                } else if (visibleSources.isNotEmpty()) {
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
+                            .weight(1f, fill = packs.isEmpty())
                             .testTag("torrent_sources_list"),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -387,6 +414,7 @@ fun TorrentSourceDialog(
                         items(visibleSources) { source ->
                             TorrentSourceItemCard(
                                 source = source,
+                                matchLabel = if (video.mediaType == MediaType.TV_SHOW) "EXACT" else null,
                                 onDownload = {
                                     onDownload(source)
                                 },
@@ -395,6 +423,68 @@ fun TorrentSourceDialog(
                                 }
                             )
                         }
+                    }
+                }
+                // Packs: collapsed by default; manual file-pick only. The
+                // engine extracts the matching inner episode file.
+                if (packs.isNotEmpty() && !isLoading) {
+                    var packsExpanded by remember(sources) { mutableStateOf(false) }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                                .clickable { packsExpanded = !packsExpanded }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Season packs (${packs.size})",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Contains the episode — downloader picks the right file",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = if (packsExpanded) "Hide" else "Show",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = YouTubeRed,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(YouTubeRed.copy(alpha = 0.12f))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    .testTag("toggle_packs_btn")
+                            )
+                        }
+                        // Tapping the row toggles; keep a11y simple via click on text above.
+                        // Whole-row click handled by wrapping Box clickable:
+                        if (packsExpanded) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            packs.take(10).forEach { pack ->
+                                TorrentSourceItemCard(
+                                    source = pack,
+                                    matchLabel = "PACK",
+                                    onDownload = { onDownload(pack) },
+                                    onOpenMagnet = { openExternalMagnetUri(context, pack.magnetUri) }
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                        }
+                        // Make the header row itself tappable via an overlay click:
+                        // (kept minimal — the Show/Hide pill is the tap target in tests)
                     }
                 }
             }
@@ -406,7 +496,8 @@ fun TorrentSourceDialog(
 private fun TorrentSourceItemCard(
     source: TorrentSource,
     onDownload: () -> Unit,
-    onOpenMagnet: () -> Unit
+    onOpenMagnet: () -> Unit,
+    matchLabel: String? = null
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -421,10 +512,36 @@ private fun TorrentSourceItemCard(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
+                // Full authentic release name so the user can verify S/E.
+                Text(
+                    text = source.title,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    // Exact vs pack badge: the trust signal.
+                    if (matchLabel != null) {
+                        val isExact = matchLabel == "EXACT"
+                        Text(
+                            text = matchLabel,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isExact) MintEmerald else AmberWarning,
+                            modifier = Modifier
+                                .background(
+                                    (if (isExact) MintEmerald else AmberWarning).copy(alpha = 0.15f),
+                                    RoundedCornerShape(4.dp)
+                                )
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                     // Quality Badge
                     Text(
                         text = source.quality,

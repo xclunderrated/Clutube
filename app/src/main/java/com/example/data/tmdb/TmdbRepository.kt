@@ -563,7 +563,15 @@ object TmdbRepository {
             if (query.isBlank()) return@runCatching emptyList()
             val response = api.searchMulti(query = query, page = page)
             val videos = response.results
-                .filter { it.posterPath != null || it.backdropPath != null }
+                // Authentic catalog only: real movies/TV with artwork, sorted
+                // by popularity. "person" hits (actors) are dropped so an
+                // actor name never renders as a fake movie row.
+                .filter {
+                    (it.mediaType == null || it.mediaType == "movie" || it.mediaType == "tv") &&
+                        (it.posterPath != null || it.backdropPath != null) &&
+                        ((it.title ?: it.name ?: it.originalTitle ?: it.originalName) != null)
+                }
+                .sortedByDescending { it.popularity ?: 0.0 }
                 .map { mapToVideoItem(it) }
             enrichVideoList(videos)
         }
@@ -600,10 +608,14 @@ object TmdbRepository {
                 (forcedType == null && item.title == null && item.name != null)
 
         val mediaType = if (isTv) MediaType.TV_SHOW else MediaType.MOVIE
-        val titleText = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: "Untitled"
+        // Authentic clean title: NEVER bake "(YEAR)" into the title string.
+        // Year lives in releaseDateIso/Formatted + publishedAt badge, and the
+        // UI renders "Title (year)" from those fields. Torrent queries use the
+        // clean title so "Dune (2024) 2024" duplication can never happen.
+        val titleText = (item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: "Untitled").trim()
         val releaseYear = (item.releaseDate ?: item.firstAirDate ?: "").take(4)
-        val yearSuffix = if (releaseYear.isNotEmpty()) " ($releaseYear)" else ""
-        val formattedTitle = "$titleText$yearSuffix"
+            .takeIf { it.matches(Regex("(19\\d{2}|20\\d{2})")) } ?: ""
+        val formattedTitle = titleText
 
         // Preferred: Official poster artwork for the exact movie or TV show.
         // Fallback 1: Current thumbnail implementation (backdrop scene from the same title).
@@ -620,8 +632,11 @@ object TmdbRepository {
         val selectedPoster = officialPoster ?: sameTitleBackdrop ?: emptyStateFallback
         val selectedBackdrop = sameTitleBackdrop ?: officialPoster
 
-        val studioIndex = kotlin.math.abs(item.id) % STUDIO_CHANNELS.size
-        val studio = STUDIO_CHANNELS[studioIndex]
+        // No fake studio rotation: the list row must not claim "Warner Bros"
+        // for a title that is not Warner's. Real network/company lands via
+        // fetchFullMediaDetails() when the title is opened; until then the
+        // row is honestly labeled as catalog (no misleading channel).
+        val catalogAvatar = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=150&auto=format&fit=crop&q=80"
 
         val voteCount = item.voteCount ?: 0
         val voteAvg = item.voteAverage ?: 0.0
@@ -670,10 +685,10 @@ object TmdbRepository {
             id = "tmdb_${item.id}",
             title = formattedTitle,
             description = fullDescription,
-            channelName = studio.name,
-            channelHandle = "@${studio.name.lowercase().replace(" ", "").replace("/", "").replace("+", "plus")}",
-            channelAvatarUrl = channelAvatarFor(studio),
-            channelSubscribers = studio.subs,
+            channelName = "TMDB Catalog",
+            channelHandle = "@tmdb",
+            channelAvatarUrl = catalogAvatar,
+            channelSubscribers = "",
             // TMDB does not expose a YouTube-style view count. Keep this empty
             // instead of turning popularity or votes into a misleading number.
             views = "",
