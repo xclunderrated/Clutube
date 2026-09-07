@@ -59,7 +59,9 @@ import com.example.model.playbackKey
 import com.example.model.releaseAlertId
 import com.example.model.releaseDateMillis
 import com.example.ui.components.FittedMediaThumbnail
+import com.example.ui.components.PendingStudioPlaceholder
 import com.example.ui.components.StudioLogoAvatar
+import com.example.ui.components.isStudioPending
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
 import java.util.concurrent.TimeUnit
@@ -371,7 +373,6 @@ private fun NotificationHeroCard(
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.THUMBNAIL,
-            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp)
         ) {
@@ -417,7 +418,9 @@ private fun NotificationHeroCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             StudioLogoAvatar(
-                logoUrl = video.channelAvatarUrl,
+                logoUrl = video.channelAvatarUrl.takeIf { it.isNotBlank() }
+                    ?: video.posterUrl?.takeIf { it.isNotBlank() }
+                    ?: video.thumbnailUrl.takeIf { it.isNotBlank() },
                 contentDescription = video.channelName,
                 modifier = Modifier.size(34.dp)
             )
@@ -431,14 +434,27 @@ private fun NotificationHeroCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = listOfNotNull(video.channelName.takeIf { it.isNotBlank() }, relativeTime)
-                        .joinToString(" · "),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (isStudioPending(video.channelName)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PendingStudioPlaceholder(width = 76.dp, height = 11.dp)
+                        Text(
+                            text = " · $relativeTime",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                } else {
+                    Text(
+                        text = listOfNotNull(video.channelName.takeIf { it.isNotBlank() }, relativeTime)
+                            .joinToString(" · "),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Box {
                 IconButton(
@@ -543,7 +559,6 @@ private fun NotificationRow(
                 .width(128.dp)
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.THUMBNAIL,
-            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             shape = RoundedCornerShape(8.dp)
         ) {
@@ -578,18 +593,24 @@ private fun NotificationRow(
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StudioLogoAvatar(
-                    logoUrl = video.channelAvatarUrl,
+                    logoUrl = video.channelAvatarUrl.takeIf { it.isNotBlank() }
+                        ?: video.posterUrl?.takeIf { it.isNotBlank() }
+                        ?: video.thumbnailUrl.takeIf { it.isNotBlank() },
                     contentDescription = video.channelName,
                     modifier = Modifier.size(22.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = video.channelName,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (isStudioPending(video.channelName)) {
+                    PendingStudioPlaceholder(width = 76.dp, height = 11.dp)
+                } else {
+                    Text(
+                        text = video.channelName,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Text(
                 text = notification.title,
@@ -724,7 +745,6 @@ private fun UpcomingReleasesShelf(
                             .fillMaxWidth()
                             .aspectRatio(16f / 9f),
                         imagePreset = ImagePreset.COMPACT_THUMBNAIL,
-                        preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
                         isWatched = false,
                         shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
                     ) {

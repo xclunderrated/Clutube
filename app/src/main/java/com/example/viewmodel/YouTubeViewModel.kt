@@ -20,6 +20,7 @@ import com.example.model.MediaType
 import com.example.model.PlayerEvent
 import com.example.model.PlayerSnapshot
 import com.example.model.ShortItem
+import com.example.model.UNRESOLVED_STUDIO_NAME
 import com.example.model.VideoItem
 import com.example.model.WatchHistoryEntry
 import com.example.model.WatchLaterSort
@@ -46,6 +47,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 import kotlin.math.min
 
@@ -104,7 +106,7 @@ data class YouTubeUiState(
     val watchLaterSort: WatchLaterSort = WatchLaterSort.RECENTLY_ADDED,
     val localProfileName: String = "Clutube",
     val localProfileAvatar: String = "C",
-    val subscribedChannelNames: Set<String> = setOf("Warner Bros. Pictures", "Netflix", "Marvel Studios"),
+    val subscribedChannelNames: Set<String> = emptySet(),
     val selectedChannel: ChannelItem? = null,
     val isChannelScreenOpen: Boolean = false,
     val channelVideos: List<VideoItem> = emptyList(),
@@ -123,7 +125,6 @@ data class YouTubeUiState(
     val customStreamInputTitle: String = "",
     val isAutoNextEpisodeEnabled: Boolean = true,
     val showContinueWatchingOnHome: Boolean = true,
-    val continueWatchFullscreen: Boolean = true,
     val releaseNotificationsEnabled: Boolean = true,
     val currentPlaybackSnapshot: PlayerSnapshot? = null,
     val skipSegments: List<SkipSegment> = emptyList(),
@@ -137,9 +138,10 @@ data class YouTubeUiState(
     val pendingResumeOverrideKey: String? = null,
     val pendingResumeOverrideSeconds: Double = 0.0,
     /**
-     * Continue Watching auto-fullscreen handoff: set when a movie/series
-     * resume requests fullscreen. MainActivity consumes it after Ready +
-     * first usable snapshot, then calls PlayerViewManager.requestNativeFullscreen.
+     * Auto-fullscreen handoff: set when a play request asks for fullscreen
+     * via playVideo(autoFullscreen = true). MainActivity consumes it after
+     * Ready + first usable snapshot, then calls
+     * PlayerViewManager.requestNativeFullscreen.
      * Cleared on consume, manual exit, error, or new load.
      */
     val pendingFullscreenKey: String? = null,
@@ -334,7 +336,6 @@ class YouTubeViewModel : ViewModel() {
                 isAutoNextEpisodeEnabled = manager.isAutoNextEnabled,
                 isSkipSegmentsEnabled = manager.isSkipSegmentsEnabled,
                 showContinueWatchingOnHome = manager.showContinueWatchingOnHome,
-                continueWatchFullscreen = manager.continueWatchFullscreen,
                 releaseNotificationsEnabled = manager.releaseNotificationsEnabled,
                 isAutoPickBestTorrent = manager.isAutoPickBestTorrent,
                 offlineSubtitleLanguage = manager.offlineSubtitleLanguage,
@@ -649,6 +650,91 @@ class YouTubeViewModel : ViewModel() {
         _uiState.update { it.copy(deviceLayoutMode = mode) }
     }
 
+    private val studioEnrichmentJobs = ConcurrentHashMap<String, Job>()
+
+    /**
+     * Resolves real studio name + logo and badge counts (movie length, TV
+     * season/episode totals) for currently visible feed cards. Only catalog
+     * rows whose TMDB id is neither cached nor in flight are fetched, at most
+     * 12 per call, so fast scrolling stays well under TMDB's rate budget.
+     * Results patch the feed list in place; the tmdbId-keyed repo cache means
+     * a title is only ever fetched once per process.
+     */
+    fun ensureFeedStudios(visibleIds: List<String>) {
+        if (visibleIds.isEmpty() || _uiState.value.isOffline) return
+        val targets = visibleIds.asSequence()
+            .distinct()
+            .mapNotNull { id -> _uiState.value.videos.find { it.id == id } }
+            .filter {
+                (it.mediaType == MediaType.MOVIE || it.mediaType == MediaType.TV_SHOW) &&
+                    it.channelName == UNRESOLVED_STUDIO_NAME
+            }
+            .mapNotNull { video ->
+                video.tmdbId
+                    ?.takeIf { key ->
+                        key.isNotBlank() &&
+                            !TmdbRepository.hasCardEnrichment(key) &&
+                            studioEnrichmentJobs[key]?.isActive != true
+                    }
+                    ?.let { video }
+            }
+            .distinctBy { it.tmdbId }
+            .take(12)
+            .toList()
+        if (targets.isEmpty()) return
+        targets.forEach { video ->
+            val tmdbKey = video.tmdbId ?: return@forEach
+            studioEnrichmentJobs[tmdbKey] = viewModelScope.launch {
+                try {
+                    val enrichment = TmdbRepository.fetchCardEnrichment(video)
+                        ?: return@launch
+                    _uiState.update { state ->
+                        state.copy(
+                            videos = state.videos.map { item ->
+                                if (item.id == video.id) {
+                                    var updated = item
+                                    enrichment.studio?.let { studio ->
+                                        // Never overwrite a row that already
+                                        // resolved (e.g. via Watch-open
+                                        // enrichment) while we were fetching.
+                                        if (updated.channelName == UNRESOLVED_STUDIO_NAME) {
+                                            updated = updated.copy(
+                                                channelName = studio.name,
+                                                channelHandle = studio.handle,
+                                                channelAvatarUrl = studio.avatarUrl,
+                                                isVerified = true
+                                            )
+                                        }
+                                    }
+                                    enrichment.runtimeMinutes?.let { mins ->
+                                        updated = updated.copy(
+                                            runtimeMinutes = mins,
+                                            duration = enrichment.durationLabel
+                                                ?: updated.duration
+                                        )
+                                    }
+                                    val seasons = enrichment.totalSeasons
+                                    val episodes = enrichment.totalEpisodes
+                                    if ((seasons ?: 0) > 0 || (episodes ?: 0) > 0) {
+                                        updated = updated.copy(
+                                            totalSeasons = seasons ?: updated.totalSeasons,
+                                            totalEpisodes = episodes ?: updated.totalEpisodes
+                                        )
+                                    }
+                                    updated
+                                } else {
+                                    item
+                                }
+                            }
+                        )
+                    }
+                } finally {
+                    studioEnrichmentJobs.remove(tmdbKey)
+                }
+            }
+        }
+    }
+
     fun reloadCurrentCategory(scrollToTopOnSuccess: Boolean = true) {
         loadCategoryContent(_uiState.value.selectedCategory, scrollToTopOnSuccess)
     }
@@ -684,13 +770,9 @@ class YouTubeViewModel : ViewModel() {
     }
 
     fun resumeWatch(entry: WatchHistoryEntry, expand: Boolean = true) {
-        // Continue Watching for movies/series goes straight to fullscreen
-        // (user request): playVideo sets pendingFullscreenKey, MainActivity
-        // consumes it after Ready + first usable snapshot.
-        val wantsFullscreen = (settingsManager?.continueWatchFullscreen ?: true) &&
-            (entry.video.mediaType == MediaType.MOVIE || entry.video.mediaType == MediaType.TV_SHOW) &&
-            !isUnreleased(entry.video.releaseDateIso ?: entry.video.releaseDateFormatted)
-        playVideo(entry.video, expand = expand, autoFullscreen = wantsFullscreen)
+        // Continue Watching opens the watch page expanded, never
+        // fullscreen — the user enters fullscreen manually when wanted.
+        playVideo(entry.video, expand = expand)
         // When the requested title is already loaded in the persistent
         // WebView, loadMedia early-returns and the rewound override would
         // never apply. Seek explicitly so Continue always lands on the
@@ -700,21 +782,11 @@ class YouTubeViewModel : ViewModel() {
             com.example.util.PlayerViewManager.activeMediaKey == entry.key
         ) {
             com.example.util.PlayerViewManager.seekTo(entry.resumePositionSeconds())
-            // Already playing same title: trigger fullscreen immediately
-            // (no new load => no new Ready event to gate on).
-            if (wantsFullscreen) {
-                _uiState.update { it.copy(pendingFullscreenKey = entry.key) }
-            }
         }
     }
 
     fun consumePendingFullscreen() {
         _uiState.update { it.copy(pendingFullscreenKey = null) }
-    }
-
-    fun setContinueWatchFullscreen(enabled: Boolean) {
-        settingsManager?.continueWatchFullscreen = enabled
-        _uiState.update { it.copy(continueWatchFullscreen = enabled, pendingFullscreenKey = null) }
     }
 
     fun removeWatchHistoryEntry(key: String) {
@@ -1388,8 +1460,130 @@ class YouTubeViewModel : ViewModel() {
 
     fun toggleAutoNextEpisode() {
         val enabled = !_uiState.value.isAutoNextEpisodeEnabled
-        settingsManager?.isAutoNextEnabled = enabled
+        settingsManager?.isAutoNextEpisodeEnabled = enabled
         _uiState.update { it.copy(isAutoNextEpisodeEnabled = enabled) }
+    }
+
+    /**
+     * Queues one TV episode from the episode selector. The queue is keyed by
+     * season+episode ([playbackKey]), so the copy carries its position and
+     * stream URL just like a tapped episode — without starting playback.
+     * Unreleased episodes and duplicates (already playing/queued) are ignored.
+     */
+    fun queueEpisode(season: Int, episode: Int) {
+        val current = _uiState.value
+        val currentVideo = current.currentPlayingVideo ?: return
+        if (currentVideo.mediaType != MediaType.TV_SHOW) return
+        val safeSeason = season.coerceAtLeast(1)
+        val safeEpisode = episode.coerceAtLeast(1)
+        val requestedEpisode = current.tvEpisodes.firstOrNull {
+            it.seasonNumber == safeSeason && it.episodeNumber == safeEpisode
+        }
+        if (requestedEpisode != null && isUnreleased(requestedEpisode.airDate)) return
+        val episodeVideo = currentVideo.copy(
+            currentSeason = safeSeason,
+            currentEpisode = safeEpisode
+        ).withStreamUrl(
+            serverId = current.selectedServerId,
+            vidSrcHost = current.selectedVidSrcServerHost
+        )
+        addToQueue(episodeVideo)
+    }
+
+    /** True when the given episode of the playing show is already queued. */
+    fun isEpisodeQueued(season: Int, episode: Int): Boolean {
+        val current = _uiState.value
+        val playing = current.currentPlayingVideo ?: return false
+        if (playing.mediaType != MediaType.TV_SHOW) return false
+        val key = playing.copy(
+            currentSeason = season.coerceAtLeast(1),
+            currentEpisode = episode.coerceAtLeast(1)
+        ).playbackKey()
+        return current.queue.any { it.playbackKey() == key }
+    }
+
+    /**
+     * Queues one TV episode to play immediately after the current item
+     * (front of queue). Shares [queueEpisode]'s guards: unreleased episodes
+     * and duplicates (already playing/queued) are ignored.
+     */
+    fun playEpisodeNext(season: Int, episode: Int) {
+        val current = _uiState.value
+        val currentVideo = current.currentPlayingVideo ?: return
+        if (currentVideo.mediaType != MediaType.TV_SHOW) return
+        val safeSeason = season.coerceAtLeast(1)
+        val safeEpisode = episode.coerceAtLeast(1)
+        val requestedEpisode = current.tvEpisodes.firstOrNull {
+            it.seasonNumber == safeSeason && it.episodeNumber == safeEpisode
+        }
+        if (requestedEpisode != null && isUnreleased(requestedEpisode.airDate)) return
+        val episodeVideo = currentVideo.copy(
+            currentSeason = safeSeason,
+            currentEpisode = safeEpisode
+        ).withStreamUrl(
+            serverId = current.selectedServerId,
+            vidSrcHost = current.selectedVidSrcServerHost
+        )
+        addToQueue(episodeVideo, playNext = true)
+    }
+
+    /** True when the given episode has a completed history entry. */
+    fun isEpisodeWatched(season: Int, episode: Int): Boolean {
+        val current = _uiState.value
+        val playing = current.currentPlayingVideo ?: return false
+        if (playing.mediaType != MediaType.TV_SHOW) return false
+        val key = playing.copy(
+            currentSeason = season.coerceAtLeast(1),
+            currentEpisode = episode.coerceAtLeast(1)
+        ).playbackKey()
+        return current.watchHistory.any { it.key == key && it.completed }
+    }
+
+    /**
+     * Correctable watched toggle for a single episode. Marks the episode's
+     * history entry completed (creating one when none exists) or reopens it
+     * when already completed. Series-level [watchedVideoIds] are left alone
+     * so toggling one episode never completes the whole show.
+     */
+    fun toggleEpisodeWatched(season: Int, episode: Int) {
+        val current = _uiState.value
+        val playing = current.currentPlayingVideo ?: return
+        if (playing.mediaType != MediaType.TV_SHOW) return
+        val safeSeason = season.coerceAtLeast(1)
+        val safeEpisode = episode.coerceAtLeast(1)
+        val episodeVideo = playing.copy(
+            currentSeason = safeSeason,
+            currentEpisode = safeEpisode
+        )
+        val key = episodeVideo.playbackKey()
+        val now = System.currentTimeMillis()
+        val existing = current.watchHistory.firstOrNull { it.key == key }
+        val updated = if (existing != null && existing.completed) {
+            existing.copy(
+                completed = false,
+                positionSeconds = 0L,
+                lastWatchedAtMillis = now
+            )
+        } else if (existing != null) {
+            val duration = existing.durationSeconds
+            existing.copy(
+                completed = true,
+                positionSeconds = if (duration > 0L) duration else max(existing.positionSeconds, 1L),
+                lastWatchedAtMillis = now
+            )
+        } else {
+            WatchHistoryEntry(
+                key = key,
+                video = episodeVideo,
+                positionSeconds = 1L,
+                durationSeconds = 1L,
+                lastWatchedAtMillis = now,
+                completed = true
+            )
+        }
+        val updatedHistory = upsertHistory(current.watchHistory, updated)
+        saveHistoryNow(updatedHistory)
+        _uiState.update { it.copy(watchHistory = updatedHistory) }
     }
 
     fun setSkipSegmentsEnabled(enabled: Boolean) {
@@ -2161,10 +2355,8 @@ class YouTubeViewModel : ViewModel() {
             } else video
         }
         if (notificationId != null) markNotificationRead(notificationId)
-        val wantsFullscreen = (settingsManager?.continueWatchFullscreen ?: true)
         if (target != null) {
-            val isLongForm = target.mediaType == MediaType.MOVIE || target.mediaType == MediaType.TV_SHOW
-            playVideo(target, expand = true, autoFullscreen = wantsFullscreen && isLongForm)
+            playVideo(target, expand = true)
             return
         }
 
@@ -2180,9 +2372,7 @@ class YouTubeViewModel : ViewModel() {
                                 currentEpisode = episode.coerceAtLeast(1)
                             )
                         } else video
-                        val isLongForm = targetVideo.mediaType == MediaType.MOVIE ||
-                            targetVideo.mediaType == MediaType.TV_SHOW
-                        playVideo(targetVideo, expand = true, autoFullscreen = wantsFullscreen && isLongForm)
+                        playVideo(targetVideo, expand = true)
                     }
                 }
         }
@@ -2256,7 +2446,6 @@ class YouTubeViewModel : ViewModel() {
                 localProfileName = "Clutube",
                 localProfileAvatar = "C",
                 showContinueWatchingOnHome = true,
-                continueWatchFullscreen = true,
                 releaseNotificationsEnabled = true,
                 notifications = emptyList(),
                 releaseAlerts = emptyList(),
@@ -2341,11 +2530,7 @@ class YouTubeViewModel : ViewModel() {
 
     fun openNotification(notification: AppNotification) {
         markNotificationRead(notification.id)
-        val video = notification.targetVideo
-        val wantsFullscreen = (settingsManager?.continueWatchFullscreen ?: true) &&
-            (video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW) &&
-            !isUnreleased(video.releaseDateIso ?: video.releaseDateFormatted)
-        playVideo(video, expand = true, autoFullscreen = wantsFullscreen)
+        playVideo(notification.targetVideo, expand = true)
     }
 
     fun isReleaseAlertActive(video: VideoItem, season: Int? = null, episode: Int? = null): Boolean {

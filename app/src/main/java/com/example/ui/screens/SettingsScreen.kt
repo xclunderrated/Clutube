@@ -73,8 +73,6 @@ fun SettingsScreen(
     onToggleAutoNextEpisode: () -> Unit = {},
     showContinueWatchingOnHome: Boolean = true,
     onSetContinueWatchingOnHome: (Boolean) -> Unit = {},
-    continueWatchFullscreen: Boolean = true,
-    onSetContinueWatchFullscreen: (Boolean) -> Unit = {},
     // Appearance
     deviceLayoutMode: DeviceLayoutMode = DeviceLayoutMode.AUTO,
     onSelectDeviceLayoutMode: (DeviceLayoutMode) -> Unit = {},
@@ -190,23 +188,6 @@ fun SettingsScreen(
                 }
             )
         }
-        item(key = "row_continue_fs", contentType = "row") {
-            SettingsRow(
-                icon = Icons.Default.PlayArrow,
-                title = "Start Continue Watching in fullscreen",
-                subtitle = if (continueWatchFullscreen) "Movies and series resume straight in fullscreen"
-                else "Off · resumes open the watch page first",
-                onClick = { onSetContinueWatchFullscreen(!continueWatchFullscreen) },
-                trailingContent = {
-                    Switch(
-                        checked = continueWatchFullscreen,
-                        onCheckedChange = onSetContinueWatchFullscreen,
-                        modifier = Modifier.testTag("continue_watch_fullscreen_toggle")
-                    )
-                }
-            )
-        }
-
         item(key = "section_appearance", contentType = "section") {
             SettingsSectionHeader(title = "Appearance")
         }

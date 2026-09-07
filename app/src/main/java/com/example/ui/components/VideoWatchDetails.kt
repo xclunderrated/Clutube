@@ -327,11 +327,20 @@ fun VideoWatchDetails(
                             val runtimeStr = if (hrs > 0) "${hrs}h ${mins}m (${video.runtimeMinutes} min)" else "${mins} min"
                             MetadataRow(label = "Runtime", value = runtimeStr)
                         }
-                        if (video.networks.isNotEmpty()) {
-                            MetadataRow(label = "Network", value = video.networks.joinToString(", "))
+                        // The bold channel name above already shows the primary
+                        // studio/network — only list additional ones here so
+                        // the name never appears twice on the Watch page.
+                        val extraNetworks = remember(video.networks, video.channelName) {
+                            video.networks.filter { !it.equals(video.channelName, ignoreCase = true) }
                         }
-                        if (video.productionCompanies.isNotEmpty()) {
-                            MetadataRow(label = "Studios", value = video.productionCompanies.joinToString(", "))
+                        val extraStudios = remember(video.productionCompanies, video.channelName) {
+                            video.productionCompanies.filter { !it.equals(video.channelName, ignoreCase = true) }
+                        }
+                        if (extraNetworks.isNotEmpty()) {
+                            MetadataRow(label = "Network", value = extraNetworks.joinToString(", "))
+                        }
+                        if (extraStudios.isNotEmpty()) {
+                            MetadataRow(label = "Studios", value = extraStudios.joinToString(", "))
                         }
                         if (!video.status.isNullOrBlank()) {
                             MetadataRow(label = "Status", value = video.status)
@@ -472,7 +481,7 @@ fun VideoWatchDetails(
                         Text(
                             text = video.channelName,
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -486,18 +495,6 @@ fun VideoWatchDetails(
                                 modifier = Modifier.size(13.dp)
                             )
                         }
-                    }
-                    // Real studio/network names only — never a generic
-                    // "Official" claim for catalog rows without one.
-                    val studioLine = remember(video.tmdbId, video.id, video.networks, video.productionCompanies) {
-                        (video.networks + video.productionCompanies).distinct().take(2).joinToString(" • ")
-                    }
-                    if (studioLine.isNotBlank()) {
-                        Text(
-                            text = studioLine,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             }

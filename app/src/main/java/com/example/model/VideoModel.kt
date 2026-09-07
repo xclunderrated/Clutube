@@ -2,6 +2,14 @@ package com.example.model
 
 import androidx.compose.runtime.Immutable
 
+/**
+ * Placeholder channel label for catalog rows whose real studio/network has
+ * not resolved yet. List endpoints carry no company info; the feed shows a
+ * shimmer placeholder instead of this string until visible-card enrichment
+ * replaces it with the real studio (or leaves it if none exists).
+ */
+const val UNRESOLVED_STUDIO_NAME = "TMDB Catalog"
+
 @Immutable
 enum class MediaType {
     VIDEO,

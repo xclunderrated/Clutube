@@ -127,6 +127,17 @@ interface TmdbApiService {
         @Query("append_to_response") appendToResponse: String = "credits"
     ): TmdbMovieDetails
 
+    /**
+     * Lightweight details without credits, for visible-card studio
+     * attribution on infinite-scroll feeds. List endpoints carry no
+     * company info, and fetching full credits per card would waste
+     * bandwidth and TMDB rate budget (40 req / 10 s).
+     */
+    @GET("movie/{movie_id}")
+    suspend fun getMovieBasic(
+        @Path("movie_id") movieId: Int
+    ): TmdbMovieDetails
+
     @GET("movie/{movie_id}/videos")
     suspend fun getMovieVideos(
         @Path("movie_id") movieId: Int
@@ -136,6 +147,12 @@ interface TmdbApiService {
     suspend fun getTvDetails(
         @Path("tv_id") tvId: Int,
         @Query("append_to_response") appendToResponse: String = "credits"
+    ): TmdbTvDetails
+
+    /** Lightweight TV details without credits — see [getMovieBasic]. */
+    @GET("tv/{tv_id}")
+    suspend fun getTvBasic(
+        @Path("tv_id") tvId: Int
     ): TmdbTvDetails
 
     @GET("tv/{tv_id}/videos")

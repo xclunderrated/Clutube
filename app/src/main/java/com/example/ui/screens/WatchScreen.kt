@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.animateItem
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,6 +64,8 @@ import com.example.model.isUnreleased
 import com.example.ui.components.TvShowEpisodeList
 import com.example.ui.components.SkipSegmentButton
 import com.example.ui.components.AmbientLightBackdrop
+import com.example.ui.components.CompactRelatedVideoCard
+import com.example.ui.components.CompactRelatedVideoCardSkeleton
 import com.example.ui.components.VideoCard
 import com.example.ui.components.VideoCardSkeleton
 import com.example.ui.components.VideoWatchDetails
@@ -128,6 +131,13 @@ fun WatchScreen(
     onToggleReleaseAlert: () -> Unit = {},
     isEpisodeAlertActive: (Int, Int) -> Boolean = { _, _ -> false },
     onNotifyEpisode: (TmdbEpisodeItem) -> Unit = {},
+    onQueueEpisode: (Int, Int) -> Unit = {},
+    isEpisodeQueued: (Int, Int) -> Boolean = { _, _ -> false },
+    onPlayEpisodeNext: (Int, Int) -> Unit = {},
+    onToggleEpisodeWatched: (Int, Int) -> Unit = {},
+    isEpisodeWatched: (Int, Int) -> Boolean = { _, _ -> false },
+    watchedCountBySeason: Map<Int, Int> = emptyMap(),
+    totalCountBySeason: Map<Int, Int> = emptyMap(),
     onDownloadMovie: ((VideoItem) -> Unit)? = null,
     onDownloadEpisode: ((VideoItem, TmdbEpisodeItem) -> Unit)? = null,
     onDownloadSeason: ((VideoItem, Int, List<TmdbEpisodeItem>) -> Unit)? = null,
@@ -155,6 +165,12 @@ fun WatchScreen(
             relatedVideos
                 .filterNot { it.id == video.id }
                 .distinctBy { it.id }
+        }
+        // Pre-chunked once per list change (was chunked()+joinToString("|") on
+        // every recompose inside items()). Phone uses compact rows (no chunk);
+        // tablet 2-col rows are precomputed here with stable first-id keys.
+        val relatedRows = remember(displayRelatedVideos, isTabletDevice) {
+            if (isTabletDevice) displayRelatedVideos.chunked(2) else emptyList()
         }
         val nextEpisode = remember(video.id, selectedSeason, video.currentEpisode, tvEpisodes) {
             if (video.mediaType != MediaType.TV_SHOW) {
@@ -290,8 +306,17 @@ fun WatchScreen(
                                 onNotifyEpisode = onNotifyEpisode,
                                 onDownloadSeason = if (onDownloadSeason != null) { { s, eps -> onDownloadSeason(video, s, eps) } } else null,
                                 onDownloadEpisode = if (onDownloadEpisode != null) { { ep -> onDownloadEpisode(video, ep) } } else null,
+                                onQueueEpisode = { ep -> onQueueEpisode(ep.seasonNumber, ep.episodeNumber) },
+                                onPlayEpisodeNext = { ep -> onPlayEpisodeNext(ep.seasonNumber, ep.episodeNumber) },
+                                onToggleEpisodeWatched = { ep ->
+                                    onToggleEpisodeWatched(ep.seasonNumber, ep.episodeNumber)
+                                },
+                                isEpisodeQueued = isEpisodeQueued,
                                 isEpisodeDownloaded = isEpisodeDownloaded,
                                 getEpisodeDownloadProgress = getEpisodeDownloadProgress,
+                                isEpisodeWatched = isEpisodeWatched,
+                                watchedCountBySeason = watchedCountBySeason,
+                                totalCountBySeason = totalCountBySeason,
                             )
                         }
                     }
@@ -372,20 +397,36 @@ fun WatchScreen(
                                     { onShare(relatedVideo) }
                                 }
                                 val onDownloadLambda = remember(relatedVideo.id, onDownloadVideo) {
-                                    onDownloadVideo?.let { { it(relatedVideo) } }
+                                    onDownloadVideo?.let { dl -> { dl(relatedVideo) } }
                                 }
-                                VideoCard(
+                                val onQueue = remember(relatedVideo.id, onAddToQueue) {
+                                    { onAddToQueue(relatedVideo) }
+                                }
+                                val onWatched = remember(relatedVideo.id, onToggleWatched) {
+                                    { onToggleWatched(relatedVideo) }
+                                }
+                                val onNotInt = remember(relatedVideo.id, onNotInterested) {
+                                    { onNotInterested(relatedVideo) }
+                                }
+                                val onNotRec = remember(relatedVideo.id, onNotRecommendChannel) {
+                                    { onNotRecommendChannel(relatedVideo) }
+                                }
+                                // Compact in narrow 27% pane: ~60% cheaper than
+                                // full VideoCard (132dp thumb vs full-width).
+                                CompactRelatedVideoCard(
                                     video = relatedVideo,
                                     onClick = onClick,
                                     onSaveToWatchLater = onSave,
                                     onShare = onShareLambda,
                                     onDownload = onDownloadLambda,
-                                    onAddToQueue = { onAddToQueue(relatedVideo) },
+                                    onAddToQueue = onQueue,
                                     isWatched = relatedVideo.id in watchedVideoIds,
-                                    onToggleWatched = { onToggleWatched(relatedVideo) },
-                                    onNotInterested = { onNotInterested(relatedVideo) },
-                                    onNotRecommendChannel = { onNotRecommendChannel(relatedVideo) },
-                                    modifier = Modifier.padding(bottom = 8.dp)
+                                    onToggleWatched = onWatched,
+                                    onNotInterested = onNotInt,
+                                    onNotRecommendChannel = onNotRec,
+                                    modifier = Modifier
+                                        .padding(bottom = 4.dp)
+                                        .animateItem()
                                 )
                             }
                         } else if (isRelatedLoading) {
@@ -394,7 +435,7 @@ fun WatchScreen(
                                 key = { "tab_rel_skel_$it" },
                                 contentType = { "related_skeleton" }
                             ) {
-                                VideoCardSkeleton()
+                                CompactRelatedVideoCardSkeleton()
                             }
                         } else {
                             item(
@@ -507,8 +548,17 @@ fun WatchScreen(
                                 onNotifyEpisode = onNotifyEpisode,
                                 onDownloadSeason = if (onDownloadSeason != null) { { s, eps -> onDownloadSeason(video, s, eps) } } else null,
                                 onDownloadEpisode = if (onDownloadEpisode != null) { { ep -> onDownloadEpisode(video, ep) } } else null,
+                                onQueueEpisode = { ep -> onQueueEpisode(ep.seasonNumber, ep.episodeNumber) },
+                                onPlayEpisodeNext = { ep -> onPlayEpisodeNext(ep.seasonNumber, ep.episodeNumber) },
+                                onToggleEpisodeWatched = { ep ->
+                                    onToggleEpisodeWatched(ep.seasonNumber, ep.episodeNumber)
+                                },
+                                isEpisodeQueued = isEpisodeQueued,
                                 isEpisodeDownloaded = isEpisodeDownloaded,
                                 getEpisodeDownloadProgress = getEpisodeDownloadProgress,
+                                isEpisodeWatched = isEpisodeWatched,
+                                watchedCountBySeason = watchedCountBySeason,
+                                totalCountBySeason = totalCountBySeason,
                             )
                         }
                     }
@@ -537,45 +587,111 @@ fun WatchScreen(
                     }
 
                     if (displayRelatedVideos.isNotEmpty()) {
-                        items(
-                            items = displayRelatedVideos.chunked(if (isTabletDevice) 2 else 1),
-                            key = { row -> row.joinToString("|") { it.id } },
-                            contentType = { "video_card" }
-                        ) { relatedRow ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                relatedRow.forEach { relatedVideo ->
-                                    val onClick = remember(relatedVideo.id, onSelectVideo) {
-                                        { onSelectVideo(relatedVideo) }
+                        if (isTabletDevice) {
+                            // Tablet 2-col: precomputed rows, stable first-id keys.
+                            items(
+                                items = relatedRows,
+                                key = { row ->
+                                    if (row.size > 1) "${row[0].id}|${row[1].id}"
+                                    else "${row[0].id}|single"
+                                },
+                                contentType = { "video_card" }
+                            ) { relatedRow ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .animateItem(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    relatedRow.forEach { relatedVideo ->
+                                        val onClick = remember(relatedVideo.id, onSelectVideo) {
+                                            { onSelectVideo(relatedVideo) }
+                                        }
+                                        val onSave = remember(relatedVideo.id, onSaveToWatchLater) {
+                                            { onSaveToWatchLater(relatedVideo) }
+                                        }
+                                        val onShareLambda = remember(relatedVideo.id, onShare) {
+                                            { onShare(relatedVideo) }
+                                        }
+                                        val onDownloadLambda = remember(relatedVideo.id, onDownloadVideo) {
+                                            onDownloadVideo?.let { dl -> { dl(relatedVideo) } }
+                                        }
+                                        val onQueue = remember(relatedVideo.id, onAddToQueue) {
+                                            { onAddToQueue(relatedVideo) }
+                                        }
+                                        val onWatched = remember(relatedVideo.id, onToggleWatched) {
+                                            { onToggleWatched(relatedVideo) }
+                                        }
+                                        val onNotInt = remember(relatedVideo.id, onNotInterested) {
+                                            { onNotInterested(relatedVideo) }
+                                        }
+                                        val onNotRec = remember(relatedVideo.id, onNotRecommendChannel) {
+                                            { onNotRecommendChannel(relatedVideo) }
+                                        }
+                                        VideoCard(
+                                            video = relatedVideo,
+                                            onClick = onClick,
+                                            onSaveToWatchLater = onSave,
+                                            onShare = onShareLambda,
+                                            onDownload = onDownloadLambda,
+                                            onAddToQueue = onQueue,
+                                            isWatched = relatedVideo.id in watchedVideoIds,
+                                            onToggleWatched = onWatched,
+                                            onNotInterested = onNotInt,
+                                            onNotRecommendChannel = onNotRec,
+                                            modifier = Modifier.weight(1f)
+                                        )
                                     }
-                                    val onSave = remember(relatedVideo.id, onSaveToWatchLater) {
-                                        { onSaveToWatchLater(relatedVideo) }
+                                    if (relatedRow.size == 1) {
+                                        Spacer(modifier = Modifier.weight(1f))
                                     }
-                                    val onShareLambda = remember(relatedVideo.id, onShare) {
-                                        { onShare(relatedVideo) }
-                                    }
-                                    val onDownloadLambda = remember(relatedVideo.id, onDownloadVideo) {
-                                        onDownloadVideo?.let { { it(relatedVideo) } }
-                                    }
-                                    VideoCard(
-                                        video = relatedVideo,
-                                        onClick = onClick,
-                                        onSaveToWatchLater = onSave,
-                                        onShare = onShareLambda,
-                                        onDownload = onDownloadLambda,
-                                        onAddToQueue = { onAddToQueue(relatedVideo) },
-                                        isWatched = relatedVideo.id in watchedVideoIds,
-                                        onToggleWatched = { onToggleWatched(relatedVideo) },
-                                        onNotInterested = { onNotInterested(relatedVideo) },
-                                        onNotRecommendChannel = { onNotRecommendChannel(relatedVideo) },
-                                        modifier = Modifier.weight(1f)
-                                    )
                                 }
-                                if (isTabletDevice && relatedRow.size == 1) {
-                                    Spacer(modifier = Modifier.weight(1f))
+                            }
+                        } else {
+                            // Phone: compact horizontal rows — no chunking alloc,
+                            // ~60% cheaper thumbs, stable per-video keys.
+                            items(
+                                items = displayRelatedVideos,
+                                key = { it.id },
+                                contentType = { "related_compact" }
+                            ) { relatedVideo ->
+                                val onClick = remember(relatedVideo.id, onSelectVideo) {
+                                    { onSelectVideo(relatedVideo) }
                                 }
+                                val onSave = remember(relatedVideo.id, onSaveToWatchLater) {
+                                    { onSaveToWatchLater(relatedVideo) }
+                                }
+                                val onShareLambda = remember(relatedVideo.id, onShare) {
+                                    { onShare(relatedVideo) }
+                                }
+                                val onDownloadLambda = remember(relatedVideo.id, onDownloadVideo) {
+                                    onDownloadVideo?.let { dl -> { dl(relatedVideo) } }
+                                }
+                                val onQueue = remember(relatedVideo.id, onAddToQueue) {
+                                    { onAddToQueue(relatedVideo) }
+                                }
+                                val onWatched = remember(relatedVideo.id, onToggleWatched) {
+                                    { onToggleWatched(relatedVideo) }
+                                }
+                                val onNotInt = remember(relatedVideo.id, onNotInterested) {
+                                    { onNotInterested(relatedVideo) }
+                                }
+                                val onNotRec = remember(relatedVideo.id, onNotRecommendChannel) {
+                                    { onNotRecommendChannel(relatedVideo) }
+                                }
+                                CompactRelatedVideoCard(
+                                    video = relatedVideo,
+                                    onClick = onClick,
+                                    onSaveToWatchLater = onSave,
+                                    onShare = onShareLambda,
+                                    onDownload = onDownloadLambda,
+                                    onAddToQueue = onQueue,
+                                    isWatched = relatedVideo.id in watchedVideoIds,
+                                    onToggleWatched = onWatched,
+                                    onNotInterested = onNotInt,
+                                    onNotRecommendChannel = onNotRec,
+                                    modifier = Modifier.animateItem()
+                                )
                             }
                         }
                     } else if (isRelatedLoading) {
@@ -593,7 +709,7 @@ fun WatchScreen(
                                     VideoCardSkeleton(modifier = Modifier.weight(1f))
                                 }
                             } else {
-                                VideoCardSkeleton()
+                                CompactRelatedVideoCardSkeleton()
                             }
                         }
                     } else {

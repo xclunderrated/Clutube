@@ -34,7 +34,7 @@ fun AmbientLightBackdrop(
     val artworkRequest = rememberOptimizedImageRequest(
         data = artworkUrl,
         preset = ImagePreset.COMPACT_THUMBNAIL,
-        crossfade = true
+        crossfade = false
     )
 
     Box(
@@ -49,10 +49,10 @@ fun AmbientLightBackdrop(
             modifier = Modifier
                 .fillMaxSize()
                 .scale(1.18f)
-                // 48dp blur is ~40% cheaper than 86dp and still fully ambient
-                // once the dark scrim is applied.
-                .blur(48.dp)
-                .alpha(0.22f)
+                // 32dp blur is ~35% cheaper than 48dp and still fully ambient
+                // once the dark scrim is applied. Only shown while paused.
+                .blur(32.dp)
+                .alpha(0.18f)
         )
         Box(
             modifier = Modifier

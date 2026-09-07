@@ -28,7 +28,8 @@ class ClutubeApp : Application(), ImageLoaderFactory {
         val okHttpClient = OkHttpClient.Builder()
             .dispatcher(Dispatcher().apply {
                 maxRequests = 32
-                maxRequestsPerHost = 12
+                // 8/host avoids saturating fling with parallel thumb fetches.
+                maxRequestsPerHost = 8
             })
             .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
             .connectTimeout(15, TimeUnit.SECONDS)

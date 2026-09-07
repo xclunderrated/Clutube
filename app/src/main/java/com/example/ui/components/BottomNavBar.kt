@@ -43,6 +43,9 @@ import com.example.ui.theme.YouTubeRed
 
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.getValue
 
 @Composable
 fun BottomNavBar(
@@ -188,7 +191,13 @@ private fun NavTabItem(
     testTag: String,
     modifier: Modifier = Modifier
 ) {
-    val alpha = if (isSelected) 1f else 0.6f
+    val targetAlpha = if (isSelected) 1f else 0.6f
+    val targetColor = MaterialTheme.colorScheme.onBackground
+    val tint by animateColorAsState(
+        targetValue = targetColor.copy(alpha = targetAlpha),
+        animationSpec = tween(150),
+        label = "nav_tint_$label"
+    )
 
     Column(
         modifier = modifier
@@ -202,7 +211,7 @@ private fun NavTabItem(
         Icon(
             imageVector = if (isSelected) iconFilled else iconOutlined,
             contentDescription = label,
-            tint = MaterialTheme.colorScheme.onBackground.copy(alpha = alpha),
+            tint = tint,
             modifier = Modifier.size(23.dp)
         )
         Spacer(modifier = Modifier.height(2.dp))
@@ -210,7 +219,7 @@ private fun NavTabItem(
             text = label,
             fontSize = 10.sp,
             fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = alpha)
+            color = tint
         )
     }
 }

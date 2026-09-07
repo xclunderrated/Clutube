@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.animateItem
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,8 +32,8 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FilterListOff
 import androidx.compose.material.icons.filled.LocalMovies
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.NorthWest
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Icon
@@ -71,7 +72,7 @@ import com.example.ui.components.VideoCard
 import com.example.ui.components.VideoCardSkeleton
 import com.example.ui.theme.YouTubeRed
 
-private val TrendingSearches = listOf(
+private val PopularSearchSuggestions = listOf(
     "Dune: Part Two",
     "Stranger Things Season 4",
     "Oppenheimer 4K",
@@ -115,7 +116,6 @@ fun SearchScreen(
     onDownloadVideo: ((VideoItem) -> Unit)? = null,
     onRemoveSearchHistory: (String) -> Unit = {},
     onClearSearchHistory: () -> Unit = {},
-    onVoiceSearch: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var typeFilter by remember { mutableStateOf(SearchTypeFilter.ALL) }
@@ -220,28 +220,32 @@ fun SearchScreen(
 
             Spacer(modifier = Modifier.width(6.dp))
 
-            IconButton(
-                onClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    if (query.isNotBlank()) onSearch(query) else onVoiceSearch()
-                },
-                modifier = Modifier
-                    .size(48.dp)
-                    .testTag("voice_search_button")
-            ) {
-                Box(
+            // Voice search isn't supported locally, so no mic button.
+            // When text is present this acts as an explicit search submit.
+            if (query.isNotBlank()) {
+                IconButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onSearch(query)
+                    },
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
+                        .size(48.dp)
+                        .testTag("voice_search_button")
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Mic,
-                        contentDescription = "Voice Search",
-                        tint = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search",
+                            tint = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }
@@ -386,7 +390,7 @@ fun SearchScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Trending TMDb Movies & Series",
+                            text = "Popular searches",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground
@@ -395,7 +399,7 @@ fun SearchScreen(
                 }
 
                 items(
-                    items = TrendingSearches,
+                    items = PopularSearchSuggestions,
                     key = { it },
                     contentType = { "trending_search" }
                 ) { suggestion ->
@@ -437,7 +441,11 @@ fun SearchScreen(
                     .fillMaxSize()
                     .padding(top = 4.dp)
             ) {
-                items(count = 4, contentType = { "video_skeleton" }) {
+                items(
+                    count = 3,
+                    key = { "search_skel_$it" },
+                    contentType = { "video_skeleton" }
+                ) {
                     VideoCardSkeleton()
                 }
             }
@@ -488,7 +496,7 @@ fun SearchScreen(
                     .fillMaxSize()
                     .padding(top = 4.dp)
             ) {
-                item {
+                item(key = "search_header", contentType = "header") {
                     val scopeLabel = when (typeFilter) {
                         SearchTypeFilter.ALL -> "Movies & series"
                         SearchTypeFilter.MOVIES -> "Movies"
@@ -508,22 +516,34 @@ fun SearchScreen(
                     contentType = { "video_card" }
                 ) { video ->
                     val key = video.playbackKey()
+                    val onClick = remember(video.id, onVideoClick) { { onVideoClick(video) } }
+                    val onSave = remember(video.id, onSaveToWatchLater) { { onSaveToWatchLater(video) } }
+                    val onShareLambda = remember(video.id, onShare) { { onShare(video) } }
+                    val onDownloadLambda = remember(video.id, onDownloadVideo) {
+                        onDownloadVideo?.let { dl -> { dl(video) } }
+                    }
+                    val onQueue = remember(video.id, onAddToQueue) { { onAddToQueue(video) } }
+                    val onWatched = remember(video.id, onToggleWatched) { { onToggleWatched(video) } }
+                    val onNotInt = remember(video.id, onNotInterested) { { onNotInterested(video) } }
+                    val onNotRec = remember(video.id, onNotRecommendChannel) { { onNotRecommendChannel(video) } }
+                    val onAlert = remember(video.id, onToggleReleaseAlert) { { onToggleReleaseAlert(video) } }
                     VideoCard(
                         video = video,
-                        onClick = { onVideoClick(video) },
-                        onSaveToWatchLater = { onSaveToWatchLater(video) },
-                        onShare = { onShare(video) },
-                        onDownload = onDownloadVideo?.let { dl -> { dl(video) } },
-                        onAddToQueue = { onAddToQueue(video) },
+                        onClick = onClick,
+                        onSaveToWatchLater = onSave,
+                        onShare = onShareLambda,
+                        onDownload = onDownloadLambda,
+                        onAddToQueue = onQueue,
                         isWatched = video.id in watchedVideoIds,
                         isSaved = video.id in savedVideoIds,
                         progressFraction = progressFractions[key] ?: progressFractions[video.titleGroupKey()],
                         continueLabel = continueLabels[key] ?: continueLabels[video.titleGroupKey()],
-                        onToggleWatched = { onToggleWatched(video) },
-                        onNotInterested = { onNotInterested(video) },
-                        onNotRecommendChannel = { onNotRecommendChannel(video) },
+                        onToggleWatched = onWatched,
+                        onNotInterested = onNotInt,
+                        onNotRecommendChannel = onNotRec,
                         isReleaseAlertActive = releaseAlertId(video) in releaseAlertIds,
-                        onToggleReleaseAlert = { onToggleReleaseAlert(video) }
+                        onToggleReleaseAlert = onAlert,
+                        modifier = Modifier.animateItem()
                     )
                 }
             }

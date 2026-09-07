@@ -1,11 +1,8 @@
 package com.example.ui.components
 
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,25 +21,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.util.ImagePreset
-import com.example.util.buildOptimizedImageRequest
 import com.example.util.rememberThumbnailRequestWithFallback
 
 /**
- * Universal media thumbnail container.
- *
- * TMDB research:
- * - poster_path = 2:3 (0.667) vertical art WITH title text baked in (w342/w500).
- * - backdrop_path = 16:9 (1.778) scene WITHOUT title (99% iso_639_1=null, w780/w1280).
- *
- * To keep the YouTube 16:9 look while showing the poster WITH the name
- * (no crop of the poster, no black bars/pillars, no extra /images API calls
- * per feed item for infinite scroll), [preferPoster] renders the full 2:3
- * poster centered (Fit) over a filled 16:9 backdrop background.
+ * Universal media thumbnail container that renders widescreen poster / backdrop art
+ * perfectly filling the 16:9 thumbnail frame (ContentScale.Crop) with zero letterboxing
+ * or black bars.
  */
 @Composable
 fun FittedMediaThumbnail(
@@ -52,7 +40,6 @@ fun FittedMediaThumbnail(
     modifier: Modifier = Modifier,
     posterUrl: String? = null,
     isPosterRatio: Boolean = false,
-    preferPoster: Boolean = false,
     imagePreset: ImagePreset = ImagePreset.THUMBNAIL,
     isWatched: Boolean = false,
     dimAlpha: Float? = null,
@@ -61,13 +48,8 @@ fun FittedMediaThumbnail(
 ) {
     // For 16:9 widescreen thumbnails, backdrop is the native 16:9 frame.
     // For 2:3 portrait posters, posterUrl is the native 2:3 frame.
-    // When preferPoster is set (movie/TV catalog), posterUrl carries the
-    // official art WITH the title and is shown uncropped (see below).
     val primaryArtwork = if (isPosterRatio) {
         posterUrl?.takeIf { it.isNotBlank() } ?: thumbnailUrl ?: backdropUrl
-    } else if (preferPoster && !posterUrl.isNullOrBlank()) {
-        // Background layer still uses the 16:9 scene so the frame is filled.
-        backdropUrl?.takeIf { it.isNotBlank() } ?: thumbnailUrl ?: posterUrl
     } else {
         backdropUrl?.takeIf { it.isNotBlank() } ?: thumbnailUrl ?: posterUrl
     }
@@ -83,31 +65,20 @@ fun FittedMediaThumbnail(
         imagePreset
     }
 
+    // No crossfade in scrolling lists: per-item fade-ins during fling cost
+    // frames. Detail/hero surfaces can opt in explicitly if needed.
     val (thumbnailRequest, onThumbnailError) = rememberThumbnailRequestWithFallback(
         primaryUrl = primaryArtwork,
         fallbackUrl = fallbackArtwork,
         preset = effectivePreset,
-        crossfade = true
+        crossfade = false
     )
-    // Foreground poster WITH title: uses existing list-level poster_path
-    // (w500) so infinite scroll pays zero extra /images calls.
-    // Note: intentionally not excluding posterUrl == primaryArtwork — when
-    // only the poster exists, the same art backs the frame (dimmed Crop)
-    // while the foreground stays uncropped (Fit), so we never crop the title.
-    val showPosterForeground = !isPosterRatio &&
-        preferPoster &&
-        !posterUrl.isNullOrBlank()
-    val appContext = LocalContext.current
-    val posterForegroundRequest = remember(appContext, posterUrl, showPosterForeground) {
-        if (showPosterForeground) {
-            buildOptimizedImageRequest(appContext, posterUrl, ImagePreset.POSTER_CARD, true)
-        } else null
-    }
     var loadFailed by remember(primaryArtwork, fallbackArtwork) { mutableStateOf(false) }
     var errorCount by remember(primaryArtwork, fallbackArtwork) { mutableStateOf(0) }
-    var posterFailed by remember(posterUrl) { mutableStateOf(false) }
+    // Static dim: animating alpha per card on every bind was 2 anims/card.
+    // Watched state changes are rare; a snap is cheaper and invisible here.
     val targetAlpha = dimAlpha ?: if (isWatched) 0.52f else 1f
-    val animatedAlpha by animateFloatAsState(targetValue = targetAlpha, label = "thumb_dim")
+    val needsDimLayer = targetAlpha < 0.999f
 
     val hasArtwork = !primaryArtwork.isNullOrBlank() || !fallbackArtwork.isNullOrBlank()
 
@@ -128,11 +99,10 @@ fun FittedMediaThumbnail(
                     .clearAndSetSemantics { }
             )
         } else {
-            // Background fills 100% of the container with zero letterboxing,
-            // side pillars, or black bars.
+            // Image fills 100% of the container with zero letterboxing, side pillars, or black bars.
             AsyncImage(
                 model = thumbnailRequest,
-                contentDescription = if (showPosterForeground) null else contentDescription,
+                contentDescription = contentDescription,
                 contentScale = ContentScale.Crop,
                 onError = {
                     errorCount += 1
@@ -147,30 +117,14 @@ fun FittedMediaThumbnail(
                     }
                 },
                 onSuccess = { loadFailed = false },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        // Dim the scene slightly when the poster sits on top
-                        // so the poster title stays legible.
-                        alpha = if (showPosterForeground) animatedAlpha * 0.55f else animatedAlpha
-                    }
+                modifier = if (needsDimLayer) {
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = targetAlpha }
+                } else {
+                    Modifier.fillMaxSize()
+                }
             )
-            // Foreground: full 2:3 poster WITH name, uncropped (Fit) and
-            // centered. Side areas show the dimmed scene, never black bars.
-            if (showPosterForeground && !posterFailed && posterForegroundRequest != null) {
-                AsyncImage(
-                    model = posterForegroundRequest,
-                    contentDescription = contentDescription,
-                    contentScale = ContentScale.Fit,
-                    onError = { posterFailed = true },
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .aspectRatio(2f / 3f)
-                        .graphicsLayer {
-                            alpha = animatedAlpha
-                        }
-                )
-            }
         }
 
         // Overlays (duration badge, watched pill, progress bar, etc.)

@@ -7,12 +7,15 @@ import com.example.model.ChannelItem
 import com.example.model.CommentItem
 import com.example.model.MediaType
 import com.example.model.ShortItem
+import com.example.model.UNRESOLVED_STUDIO_NAME
 import com.example.model.VideoItem
 import com.example.data.youtube.YouTubeChannelArtworkExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -416,6 +419,100 @@ object TmdbRepository {
     private suspend fun enrichVideoList(videos: List<VideoItem>): List<VideoItem> =
         videos.map(::applyCachedChannelArtwork)
 
+    /** Real studio identity for a feed card: name, handle, logo URL. */
+    data class StudioAttribution(
+        val name: String,
+        val handle: String,
+        val avatarUrl: String
+    )
+
+    /**
+     * Visible-card enrichment: optional studio identity plus the counts the
+     * main-page badges need (movie runtime, TV season/episode totals).
+     * Any field may be null when TMDB has nothing usable — callers keep
+     * whatever the card already shows instead of rendering placeholders.
+     */
+    data class CardEnrichment(
+        val studio: StudioAttribution?,
+        val runtimeMinutes: Int? = null,
+        val totalSeasons: Int? = null,
+        val totalEpisodes: Int? = null,
+        val durationLabel: String? = null
+    )
+
+    /**
+     * Visible-card enrichment cache, keyed by TMDB id so infinite scroll
+     * never refetches a title — successes (even partial) are stored, so a
+     * title is only ever fetched once per process. Only outright transport
+     * failures stay uncached and may be retried on a later scroll event.
+     * The semaphore caps concurrent detail calls well under TMDB's
+     * 40-requests-per-10-seconds budget even during fast flings.
+     */
+    private val cardEnrichmentCache = ConcurrentHashMap<String, CardEnrichment>()
+    private val cardEnrichmentSlots = Semaphore(permits = 4)
+
+    fun hasCardEnrichment(tmdbId: String): Boolean =
+        cardEnrichmentCache.containsKey(tmdbId)
+
+    /**
+     * Resolves one feed card via the lightweight basic-details endpoint — no
+     * credits payload. Returns the real production company (movies) or
+     * network/company (TV) plus runtime / season-episode totals for the
+     * main-page badges. Null only on transport failure; partial results
+     * (studio without counts or vice versa) are still cached and returned.
+     */
+    suspend fun fetchCardEnrichment(video: VideoItem): CardEnrichment? =
+        withContext(Dispatchers.IO) {
+            val tmdbKey = video.tmdbId?.takeIf { it.isNotBlank() } ?: return@withContext null
+            cardEnrichmentCache[tmdbKey]?.let { return@withContext it }
+            val tmdbIdInt = tmdbKey.toIntOrNull() ?: return@withContext null
+            cardEnrichmentSlots.withPermit {
+                // Re-check inside the permit: a concurrent caller may have
+                // resolved this title while we were waiting for a slot.
+                cardEnrichmentCache[tmdbKey]?.let { return@withPermit it }
+                runCatching {
+                    if (video.mediaType == MediaType.TV_SHOW) {
+                        val details = api.getTvBasic(tmdbIdInt)
+                        val network = details.networks?.firstOrNull { it.logoPath != null }
+                            ?: details.networks?.firstOrNull()
+                        val company = details.productionCompanies?.firstOrNull { it.logoPath != null }
+                            ?: details.productionCompanies?.firstOrNull()
+                        val name = network?.name ?: company?.name
+                        val logo = logoUrlForIds(company?.id, network?.id)
+                            ?: network?.logoPath?.let { "${TmdbClient.IMAGE_BASE_W500}$it" }
+                            ?: company?.logoPath?.let { "${TmdbClient.IMAGE_BASE_W500}$it" }
+                        CardEnrichment(
+                            studio = if (name.isNullOrBlank() || logo.isNullOrBlank()) null
+                            else StudioAttribution(name, studioHandle(name), logo),
+                            totalSeasons = details.numberOfSeasons?.takeIf { it > 0 },
+                            totalEpisodes = details.numberOfEpisodes?.takeIf { it > 0 }
+                        )
+                    } else {
+                        val details = api.getMovieBasic(tmdbIdInt)
+                        val company = details.productionCompanies?.firstOrNull { it.logoPath != null }
+                            ?: details.productionCompanies?.firstOrNull()
+                        val name = company?.name
+                        val logo = logoUrlForIds(company?.id, null)
+                            ?: company?.logoPath?.let { "${TmdbClient.IMAGE_BASE_W500}$it" }
+                        val runtime = details.runtime?.takeIf { it > 0 }
+                        CardEnrichment(
+                            studio = if (name.isNullOrBlank() || logo.isNullOrBlank()) null
+                            else StudioAttribution(name, studioHandle(name), logo),
+                            runtimeMinutes = runtime,
+                            durationLabel = runtime?.let { mins ->
+                                val hrs = mins / 60
+                                val remain = mins % 60
+                                if (hrs > 0) "${hrs}h ${remain}m" else "${mins}m"
+                            }
+                        )
+                    }
+                }.getOrNull()?.also { cardEnrichmentCache[tmdbKey] = it }
+            }
+        }
+
+    private fun studioHandle(studioName: String): String =
+        "@${studioName.lowercase(java.util.Locale.US).replace(" ", "").replace("/", "").replace("+", "plus")}"
+
     suspend fun getTrendingFeed(page: Int = 1): Result<List<VideoItem>> = withContext(Dispatchers.IO) {
         runCatching {
             val response = api.getTrendingAllWeek(page)
@@ -683,7 +780,7 @@ object TmdbRepository {
             id = "tmdb_${item.id}",
             title = formattedTitle,
             description = fullDescription,
-            channelName = "TMDB Catalog",
+            channelName = UNRESOLVED_STUDIO_NAME,
             channelHandle = "@tmdb",
             channelAvatarUrl = catalogAvatar,
             channelSubscribers = "",

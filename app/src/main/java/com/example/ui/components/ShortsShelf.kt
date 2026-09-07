@@ -148,10 +148,11 @@ fun ShortCard(
     onClick: () -> Unit,
     onMoreOptions: (() -> Unit)? = null
 ) {
+    // No crossfade in scrolling shelf — fade-ins during fling drop frames.
     val imageRequest = rememberOptimizedImageRequest(
         data = item.thumbnailUrl,
         preset = ImagePreset.SHORT_CARD,
-        crossfade = true
+        crossfade = false
     )
 
     Box(

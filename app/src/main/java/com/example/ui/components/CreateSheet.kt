@@ -17,10 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ElectricBolt
-import androidx.compose.material.icons.filled.LiveTv
-import androidx.compose.material.icons.filled.PostAdd
-import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -92,45 +89,46 @@ fun CreateSheet(
                 }
             )
 
-            CreateOptionItem(
-                icon = Icons.Default.ElectricBolt,
-                iconBgColor = MaterialTheme.colorScheme.surfaceVariant,
-                iconTint = MaterialTheme.colorScheme.onBackground,
-                title = "Create a Short",
-                subtitle = "Unavailable in local-only mode",
-                enabled = false,
-                onClick = {}
-            )
+            // Local-only mode note: creation/upload/live/posts are not
+            // supported in this build, so we show one honest explainer
+            // instead of four dead rows.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
 
-            CreateOptionItem(
-                icon = Icons.Default.Upload,
-                iconBgColor = MaterialTheme.colorScheme.surfaceVariant,
-                iconTint = MaterialTheme.colorScheme.onBackground,
-                title = "Upload a video",
-                subtitle = "Uploads are not available locally",
-                enabled = false,
-                onClick = {}
-            )
+                Spacer(modifier = Modifier.width(14.dp))
 
-            CreateOptionItem(
-                icon = Icons.Default.LiveTv,
-                iconBgColor = MaterialTheme.colorScheme.surfaceVariant,
-                iconTint = MaterialTheme.colorScheme.onBackground,
-                title = "Go LIVE",
-                subtitle = "Live broadcasting is not available locally",
-                enabled = false,
-                onClick = {}
-            )
-
-            CreateOptionItem(
-                icon = Icons.Default.PostAdd,
-                iconBgColor = MaterialTheme.colorScheme.surfaceVariant,
-                iconTint = MaterialTheme.colorScheme.onBackground,
-                title = "Create a post",
-                subtitle = "Posts are not available in local-only mode",
-                enabled = false,
-                onClick = {}
-            )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Uploads, Shorts, live & posts aren't available",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Clutube is watch-only locally. Use Stream above to play movies & series.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
         }

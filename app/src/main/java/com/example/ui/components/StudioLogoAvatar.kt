@@ -52,7 +52,7 @@ fun StudioLogoAvatar(
     }
     val logoRequest = rememberOptimizedImageRequest(
         data = logoUrl,
-        preset = ImagePreset.LARGE_AVATAR
+        preset = ImagePreset.AVATAR
     )
 
     Box(

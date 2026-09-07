@@ -53,7 +53,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.MediaType
 import com.example.model.VideoItem
 import com.example.model.playbackKey
 import com.example.ui.theme.YouTubeRed
@@ -112,7 +111,7 @@ fun QueueSheet(
                     fontWeight = FontWeight.Bold,
                     color = YouTubeRed
                 )
-                QueueVideoRow(video = currentVideo, isPlaying = true, onClick = {})
+                QueueVideoRow(video = currentVideo, isPlaying = true, onClick = {}, isClickable = false)
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
             }
 
@@ -201,6 +200,7 @@ private fun QueueVideoRow(
     onClick: () -> Unit,
     onRemove: (() -> Unit)? = null,
     onMove: ((Int) -> Unit)? = null,
+    isClickable: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val haptics = LocalHapticFeedback.current
@@ -245,10 +245,14 @@ private fun QueueVideoRow(
                     }
                 } else Modifier
             )
-            .clickable(
-                role = Role.Button,
-                onClickLabel = "Play ${video.title}",
-                onClick = onClick
+            .then(
+                if (isClickable) {
+                    Modifier.clickable(
+                        role = Role.Button,
+                        onClickLabel = "Play ${video.title}",
+                        onClick = onClick
+                    )
+                } else Modifier
             )
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -262,7 +266,6 @@ private fun QueueVideoRow(
                 .width(96.dp)
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.COMPACT_THUMBNAIL,
-            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             shape = RoundedCornerShape(5.dp)
         ) {

@@ -25,7 +25,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.State
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.composed
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,6 +39,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -57,8 +63,55 @@ fun rememberShimmerBrush(): Brush {
 }
 
 /**
+ * YouTube-style shimmer.
+ *
+ * Scroll perf design:
+ * - ONE infiniteTransition per screen via [SharedShimmerHost]; all skeleton
+ *   nodes read [LocalShimmerTranslate] in the draw phase (no recomposition).
+ * - [PendingStudioPlaceholder] (rendered per feed card while enrichment
+ *   resolves) is STATIC — dozens of concurrent sweeps during scroll was the
+ *   worst scroll-jank source. It reserves layout size so names land w/o shift.
+ * - Only initial-load skeletons (thumbnail) animate.
+ */
+val LocalShimmerTranslate = compositionLocalOf<Float?> { null }
+
+@Composable
+fun rememberSharedShimmerTranslate(): State<Float> {
+    val transition = rememberInfiniteTransition(label = "shared_shimmer")
+    return transition.animateFloat(
+        initialValue = -400f,
+        targetValue = 1400f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1300, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shared_shimmer_anim"
+    )
+}
+
+/**
+ * Provide a single shared sweep for a scrolling screen. Place around the
+ * LazyColumn/Grid content (e.g. Home feed) so every skeleton shares one clock.
+ */
+@Composable
+fun SharedShimmerHost(content: @Composable () -> Unit) {
+    val translate by rememberSharedShimmerTranslate()
+    CompositionLocalProvider(LocalShimmerTranslate provides translate) {
+        content()
+    }
+}
+
+/** Static themed placeholder — zero animation, zero per-frame cost. */
+fun Modifier.staticPlaceholder(): Modifier = composed {
+    val scheme = MaterialTheme.colorScheme
+    val baseColor = scheme.surfaceVariant.copy(alpha = 0.85f)
+    this.then(Modifier.drawBehind { drawRect(color = baseColor) })
+}
+
+/**
  * Animated skeleton highlight that reads the animation state in the draw phase.
  * The layout and composition phases therefore stay untouched on every animation frame.
+ * When inside [SharedShimmerHost], reuses the shared clock (1 anim per screen).
  */
 @Composable
 fun Modifier.shimmerPlaceholder(): Modifier {
@@ -69,12 +122,27 @@ fun Modifier.shimmerPlaceholder(): Modifier {
     val shimmerColors = remember(baseColor, highlightColor) {
         listOf(baseColor, highlightColor, baseColor)
     }
+    val sharedTranslate = LocalShimmerTranslate.current
+    if (sharedTranslate != null) {
+        return this.then(
+            Modifier.drawBehind {
+                drawRect(color = baseColor)
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colors = shimmerColors,
+                        start = Offset(sharedTranslate - 400f, sharedTranslate - 400f),
+                        end = Offset(sharedTranslate, sharedTranslate)
+                    )
+                )
+            }
+        )
+    }
     val transition = rememberInfiniteTransition(label = "shimmer")
     val translateAnim = transition.animateFloat(
         initialValue = -400f,
         targetValue = 1400f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1100, easing = LinearEasing),
+            animation = tween(durationMillis = 1300, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "shimmer_anim"
@@ -99,8 +167,40 @@ fun Modifier.shimmerPlaceholder(): Modifier {
 fun Modifier.shimmerEffect(): Modifier = shimmerPlaceholder()
 
 /**
+ * True while a catalog row still carries the placeholder studio label.
+ * UI shows [PendingStudioPlaceholder] instead of the string until
+ * visible-card enrichment resolves the real studio (YouTube-style:
+ * nothing fake is ever rendered as the channel name).
+ */
+fun isStudioPending(channelName: String): Boolean =
+    channelName == com.example.model.UNRESOLVED_STUDIO_NAME
+
+/**
+ * Fixed-size bar reserving the channel-name slot while the real
+ * studio resolves. Fixed size avoids layout shift when the name lands.
+ * STATIC by design: this renders per feed card during scroll, so animating
+ * it would mean dozens of concurrent sweeps (the #1 scroll-jank source).
+ */
+@Composable
+fun PendingStudioPlaceholder(
+    modifier: Modifier = Modifier,
+    width: Dp = 84.dp,
+    height: Dp = 11.dp
+) {
+    Box(
+        modifier = modifier
+            .width(width)
+            .height(height)
+            .clip(RoundedCornerShape(3.dp))
+            .staticPlaceholder()
+            .clearAndSetSemantics { }
+    )
+}
+
+/**
  * Skeleton placeholder for main feed VideoCard.
- * Clean 16:9 thumbnail, time badge placeholder, channel avatar circle, and multi-line title shimmer bars.
+ * Only the 16:9 thumbnail sweeps; avatar + text bars are static so an
+ * initial-load list of 6 skeletons costs 6 sweeps instead of ~24.
  */
 @Composable
 fun VideoCardSkeleton(
@@ -113,7 +213,7 @@ fun VideoCardSkeleton(
             .testTag("video_card_skeleton")
             .clearAndSetSemantics { }
     ) {
-        // Thumbnail Shimmer
+        // Thumbnail Shimmer (only animated node)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -124,7 +224,7 @@ fun VideoCardSkeleton(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Info Row: Avatar + Title & Meta lines
+        // Info Row: Avatar + Title & Meta lines (static — no per-frame cost)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -136,7 +236,7 @@ fun VideoCardSkeleton(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape)
-                    .shimmerPlaceholder()
+                    .staticPlaceholder()
             )
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -150,7 +250,7 @@ fun VideoCardSkeleton(
                         .fillMaxWidth(0.92f)
                         .height(14.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .shimmerPlaceholder()
+                        .staticPlaceholder()
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -161,7 +261,7 @@ fun VideoCardSkeleton(
                         .fillMaxWidth(0.58f)
                         .height(12.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .shimmerPlaceholder()
+                        .staticPlaceholder()
                 )
             }
         }
@@ -189,6 +289,7 @@ fun PremiereHeroCardSkeleton(
 
 /**
  * Skeleton placeholder for YouTube Shorts shelf.
+ * Only posters sweep; title bars static.
  */
 @Composable
 fun ShortsShelfSkeleton(
@@ -200,13 +301,13 @@ fun ShortsShelfSkeleton(
             .padding(vertical = 12.dp)
             .clearAndSetSemantics { }
     ) {
-        // Shelf Title Skeleton
+        // Shelf Title Skeleton (static)
         Box(
             modifier = Modifier
                 .padding(horizontal = 14.dp, vertical = 6.dp)
                 .size(width = 100.dp, height = 18.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .shimmerPlaceholder()
+                .staticPlaceholder()
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -236,7 +337,7 @@ fun ShortsShelfSkeleton(
                             .fillMaxWidth(0.9f)
                             .height(12.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .shimmerPlaceholder()
+                            .staticPlaceholder()
                     )
                 }
             }
@@ -246,6 +347,7 @@ fun ShortsShelfSkeleton(
 
 /**
  * Skeleton placeholder for TV Show Episode item in Watch Screen.
+ * Thumbnail sweeps; text bars static.
  */
 @Composable
 fun EpisodeItemCardSkeleton(
@@ -261,7 +363,7 @@ fun EpisodeItemCardSkeleton(
             .clearAndSetSemantics { },
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Thumbnail skeleton
+        // Thumbnail skeleton (only animated node)
         Box(
             modifier = Modifier
                 .width(115.dp)
@@ -272,7 +374,7 @@ fun EpisodeItemCardSkeleton(
 
         Spacer(modifier = Modifier.width(10.dp))
 
-        // Episode info skeleton
+        // Episode info skeleton (static)
         Column(
             modifier = Modifier.weight(1f)
         ) {
@@ -281,7 +383,7 @@ fun EpisodeItemCardSkeleton(
                     .fillMaxWidth(0.75f)
                     .height(14.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .shimmerEffect()
+                    .staticPlaceholder()
             )
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -291,7 +393,7 @@ fun EpisodeItemCardSkeleton(
                     .fillMaxWidth(0.4f)
                     .height(11.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .shimmerEffect()
+                    .staticPlaceholder()
             )
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -301,7 +403,7 @@ fun EpisodeItemCardSkeleton(
                     .fillMaxWidth(0.9f)
                     .height(10.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .shimmerEffect()
+                    .staticPlaceholder()
             )
         }
     }
@@ -309,6 +411,7 @@ fun EpisodeItemCardSkeleton(
 
 /**
  * Skeleton placeholder for CompactRelatedVideoCard (Up next sidebar/list).
+ * Thumbnail sweeps; text static.
  */
 @Composable
 fun CompactRelatedVideoCardSkeleton(
@@ -337,7 +440,7 @@ fun CompactRelatedVideoCardSkeleton(
                     .fillMaxWidth(0.85f)
                     .height(13.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .shimmerEffect()
+                    .staticPlaceholder()
             )
             Spacer(modifier = Modifier.height(6.dp))
             Box(
@@ -345,7 +448,7 @@ fun CompactRelatedVideoCardSkeleton(
                     .fillMaxWidth(0.5f)
                     .height(11.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .shimmerEffect()
+                    .staticPlaceholder()
             )
         }
     }

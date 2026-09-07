@@ -28,18 +28,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import com.example.model.MediaType
 import com.example.model.VideoItem
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
-import com.example.util.rememberThumbnailRequestWithFallback
 
 @Composable
 fun MiniPlayer(
@@ -51,11 +47,8 @@ fun MiniPlayer(
     progressFraction: Float = 0f,
     modifier: Modifier = Modifier
 ) {
-    val (thumbnailRequest, onThumbnailError) = rememberThumbnailRequestWithFallback(
-        primaryUrl = video.thumbnailUrl,
-        fallbackUrl = video.backdropUrl,
-        preset = ImagePreset.COMPACT_THUMBNAIL
-    )
+    // Thumbnail request lives inside FittedMediaThumbnail — no second fetch here
+    // (previous version built an unused request per composition).
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -84,7 +77,6 @@ fun MiniPlayer(
                         .height(46.dp)
                         .aspectRatio(16f / 9f),
                     imagePreset = ImagePreset.COMPACT_THUMBNAIL,
-                    preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
                     isWatched = false,
                     shape = RoundedCornerShape(6.dp)
                 )

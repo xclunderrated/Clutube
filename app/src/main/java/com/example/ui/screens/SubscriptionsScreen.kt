@@ -4,9 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,7 +16,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.animateItem
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -69,6 +76,7 @@ fun SubscriptionsScreen(
     savedVideoIds: Set<String> = emptySet(),
     progressFractions: Map<String, Float> = emptyMap(),
     continueLabels: Map<String, String> = emptyMap(),
+    isTabletLayout: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var selectedSubFilter by remember { mutableStateOf("All") }
@@ -103,7 +111,71 @@ fun SubscriptionsScreen(
             .background(MaterialTheme.colorScheme.background)
             .testTag("subscriptions_screen")
     ) {
-        if (channels.isNotEmpty()) {
+        SubscriptionContent(
+            channels = channels,
+            filteredVideos = filteredVideos,
+            selectedSubFilter = selectedSubFilter,
+            onSubFilterSelected = { selectedSubFilter = it },
+            filters = filters,
+            selectedChannelFilterId = selectedChannelFilterId,
+            onChannelFilterSelected = { selectedChannelFilterId = it },
+            onChannelClick = onChannelClick,
+            onVideoClick = onVideoClick,
+            onSaveToWatchLater = onSaveToWatchLater,
+            onShare = onShare,
+            onAddToQueue = onAddToQueue,
+            watchedVideoIds = watchedVideoIds,
+            onToggleWatched = onToggleWatched,
+            onNotInterested = onNotInterested,
+            onNotRecommendChannel = onNotRecommendChannel,
+            releaseAlertIds = releaseAlertIds,
+            onToggleReleaseAlert = onToggleReleaseAlert,
+            onDownloadVideo = onDownloadVideo,
+            savedVideoIds = savedVideoIds,
+            progressFractions = progressFractions,
+            continueLabels = continueLabels,
+            isTabletLayout = isTabletLayout
+        )
+    }
+}
+
+@Composable
+private fun SubscriptionContent(
+    channels: List<ChannelItem>,
+    filteredVideos: List<VideoItem>,
+    selectedSubFilter: String,
+    onSubFilterSelected: (String) -> Unit,
+    filters: List<String>,
+    selectedChannelFilterId: String?,
+    onChannelFilterSelected: (String?) -> Unit,
+    onChannelClick: (ChannelItem) -> Unit,
+    onVideoClick: (VideoItem) -> Unit,
+    onSaveToWatchLater: (VideoItem) -> Unit,
+    onShare: (VideoItem) -> Unit,
+    onAddToQueue: (VideoItem) -> Unit,
+    watchedVideoIds: Set<String>,
+    onToggleWatched: (VideoItem) -> Unit,
+    onNotInterested: (VideoItem) -> Unit,
+    onNotRecommendChannel: (VideoItem) -> Unit,
+    releaseAlertIds: Set<String>,
+    onToggleReleaseAlert: (VideoItem) -> Unit,
+    onDownloadVideo: ((VideoItem) -> Unit)?,
+    savedVideoIds: Set<String>,
+    progressFractions: Map<String, Float>,
+    continueLabels: Map<String, String>,
+    isTabletLayout: Boolean
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        // Same breakpoints as Home: 2 cards side by side on tablet,
+        // 3 on very wide screens, single column on phones.
+        val isWide = isTabletLayout || maxWidth >= 600.dp
+        val gridColumns = if (maxWidth >= 1000.dp) 3 else 2
+        // Hoisted so rotate/filter keeps position (was reset every change).
+        val subListState = rememberLazyListState()
+        val subGridState = rememberLazyGridState()
+
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (channels.isNotEmpty()) {
             // Horizontal Story Avatars Bar with LazyRow
             LazyRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -125,7 +197,7 @@ fun SubscriptionsScreen(
                                 // If already selected, open full channel profile
                                 onChannelClick(channel)
                             } else {
-                                selectedChannelFilterId = channel.id
+                                onChannelFilterSelected(channel.id)
                             }
                         },
                         onLongClick = { onChannelClick(channel) }
@@ -141,7 +213,7 @@ fun SubscriptionsScreen(
                         modifier = Modifier
                             .clickable {
                                 if (selectedChannelFilterId != null) {
-                                    selectedChannelFilterId = null
+                                    onChannelFilterSelected(null)
                                 } else if (channels.isNotEmpty()) {
                                     onChannelClick(channels.first())
                                 }
@@ -170,7 +242,7 @@ fun SubscriptionsScreen(
                         .background(
                             if (isSelected) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceVariant
                         )
-                        .clickable { selectedSubFilter = filter }
+                        .clickable { onSubFilterSelected(filter) }
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(
@@ -206,9 +278,55 @@ fun SubscriptionsScreen(
                     )
                 }
             }
+        } else if (isWide) {
+            // Uploads Feed — tablet grid, same columns as Home.
+            LazyVerticalGrid(
+                state = subGridState,
+                columns = GridCells.Fixed(gridColumns),
+                contentPadding = PaddingValues(bottom = 80.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 14.dp)
+                    .testTag("subscriptions_video_grid")
+            ) {
+                items(
+                    items = filteredVideos,
+                    key = { it.id },
+                    contentType = { "video_card" }
+                ) { video ->
+                    SubscriptionVideoCard(
+                        video = video,
+                        onVideoClick = onVideoClick,
+                        onSaveToWatchLater = onSaveToWatchLater,
+                        onShare = onShare,
+                        onAddToQueue = onAddToQueue,
+                        watchedVideoIds = watchedVideoIds,
+                        onToggleWatched = onToggleWatched,
+                        onNotInterested = onNotInterested,
+                        onNotRecommendChannel = onNotRecommendChannel,
+                        releaseAlertIds = releaseAlertIds,
+                        onToggleReleaseAlert = onToggleReleaseAlert,
+                        onDownloadVideo = onDownloadVideo,
+                        savedVideoIds = savedVideoIds,
+                        progressFractions = progressFractions,
+                        continueLabels = continueLabels
+                    )
+                }
+
+                item(
+                    key = "sub_bottom_spacer",
+                    contentType = "spacer",
+                    span = { GridItemSpan(gridColumns) }
+                ) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
         } else {
-            // Uploads Feed
+            // Uploads Feed — single column on phones.
             LazyColumn(
+                state = subListState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = 8.dp)
@@ -218,28 +336,22 @@ fun SubscriptionsScreen(
                     key = { it.id },
                     contentType = { "video_card" }
                 ) { video ->
-                    val onClick = remember(video.id, onVideoClick) { { onVideoClick(video) } }
-                    val onSave = remember(video.id, onSaveToWatchLater) { { onSaveToWatchLater(video) } }
-                    val onShareLambda = remember(video.id, onShare) { { onShare(video) } }
-                    val onDownloadLambda = remember(video.id, onDownloadVideo) {
-                        onDownloadVideo?.let { { it(video) } }
-                    }
-                    VideoCard(
+                    SubscriptionVideoCard(
                         video = video,
-                        onClick = onClick,
-                        onSaveToWatchLater = onSave,
-                        onShare = onShareLambda,
-                        onDownload = onDownloadLambda,
-                        onAddToQueue = { onAddToQueue(video) },
-                        isWatched = video.id in watchedVideoIds,
-                        isSaved = video.id in savedVideoIds,
-                        progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
-                        continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
-                        onToggleWatched = { onToggleWatched(video) },
-                        onNotInterested = { onNotInterested(video) },
-                        onNotRecommendChannel = { onNotRecommendChannel(video) },
-                        isReleaseAlertActive = releaseAlertId(video) in releaseAlertIds,
-                        onToggleReleaseAlert = { onToggleReleaseAlert(video) }
+                        onVideoClick = onVideoClick,
+                        onSaveToWatchLater = onSaveToWatchLater,
+                        onShare = onShare,
+                        onAddToQueue = onAddToQueue,
+                        watchedVideoIds = watchedVideoIds,
+                        onToggleWatched = onToggleWatched,
+                        onNotInterested = onNotInterested,
+                        onNotRecommendChannel = onNotRecommendChannel,
+                        releaseAlertIds = releaseAlertIds,
+                        onToggleReleaseAlert = onToggleReleaseAlert,
+                        onDownloadVideo = onDownloadVideo,
+                        savedVideoIds = savedVideoIds,
+                        progressFractions = progressFractions,
+                        continueLabels = continueLabels
                     )
                 }
 
@@ -248,7 +360,57 @@ fun SubscriptionsScreen(
                 }
             }
         }
+        } // Column
+    } // BoxWithConstraints
+}
+
+@Composable
+private fun SubscriptionVideoCard(
+    video: VideoItem,
+    onVideoClick: (VideoItem) -> Unit,
+    onSaveToWatchLater: (VideoItem) -> Unit,
+    onShare: (VideoItem) -> Unit,
+    onAddToQueue: (VideoItem) -> Unit,
+    watchedVideoIds: Set<String>,
+    onToggleWatched: (VideoItem) -> Unit,
+    onNotInterested: (VideoItem) -> Unit,
+    onNotRecommendChannel: (VideoItem) -> Unit,
+    releaseAlertIds: Set<String>,
+    onToggleReleaseAlert: (VideoItem) -> Unit,
+    onDownloadVideo: ((VideoItem) -> Unit)?,
+    savedVideoIds: Set<String>,
+    progressFractions: Map<String, Float>,
+    continueLabels: Map<String, String>
+) {
+    val onClick = remember(video.id, onVideoClick) { { onVideoClick(video) } }
+    val onSave = remember(video.id, onSaveToWatchLater) { { onSaveToWatchLater(video) } }
+    val onShareLambda = remember(video.id, onShare) { { onShare(video) } }
+    val onDownloadLambda = remember(video.id, onDownloadVideo) {
+        onDownloadVideo?.let { dl -> { dl(video) } }
     }
+    val onQueue = remember(video.id, onAddToQueue) { { onAddToQueue(video) } }
+    val onWatched = remember(video.id, onToggleWatched) { { onToggleWatched(video) } }
+    val onNotInt = remember(video.id, onNotInterested) { { onNotInterested(video) } }
+    val onNotRec = remember(video.id, onNotRecommendChannel) { { onNotRecommendChannel(video) } }
+    val onAlert = remember(video.id, onToggleReleaseAlert) { { onToggleReleaseAlert(video) } }
+    VideoCard(
+        video = video,
+        onClick = onClick,
+        onSaveToWatchLater = onSave,
+        onShare = onShareLambda,
+        onDownload = onDownloadLambda,
+        onAddToQueue = onQueue,
+        isWatched = video.id in watchedVideoIds,
+        isSaved = video.id in savedVideoIds,
+        progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
+        continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
+        onToggleWatched = onWatched,
+        onNotInterested = onNotInt,
+        onNotRecommendChannel = onNotRec,
+        isReleaseAlertActive = releaseAlertId(video) in releaseAlertIds,
+        onToggleReleaseAlert = onAlert,
+        modifier = Modifier.animateItem()
+    )
 }
 
 @Composable

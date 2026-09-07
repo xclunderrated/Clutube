@@ -205,11 +205,6 @@ class SettingsManager(context: Context) {
         get() = prefs.getBoolean(KEY_SHOW_CONTINUE_WATCHING_ON_HOME, true)
         set(value) = prefs.edit().putBoolean(KEY_SHOW_CONTINUE_WATCHING_ON_HOME, value).apply()
 
-    /** When true, Continue Watching for movies/series jumps straight to fullscreen. */
-    var continueWatchFullscreen: Boolean
-        get() = prefs.getBoolean(KEY_CONTINUE_WATCH_FULLSCREEN, true)
-        set(value) = prefs.edit().putBoolean(KEY_CONTINUE_WATCH_FULLSCREEN, value).apply()
-
     var localProfileName: String
         get() = prefs.getString(KEY_LOCAL_PROFILE_NAME, "Clutube")?.trim().orEmpty().ifBlank { "Clutube" }
         set(value) = prefs.edit().putString(KEY_LOCAL_PROFILE_NAME, value.trim().ifBlank { "Clutube" }).apply()
@@ -261,8 +256,8 @@ class SettingsManager(context: Context) {
             .apply()
 
     var subscribedChannelNames: Set<String>
-        get() = prefs.getStringSet(KEY_SUBSCRIBED_CHANNELS, setOf("Warner Bros. Pictures", "Netflix", "Marvel Studios"))
-            ?: setOf("Warner Bros. Pictures", "Netflix", "Marvel Studios")
+        get() = prefs.getStringSet(KEY_SUBSCRIBED_CHANNELS, emptySet())
+            ?: emptySet()
         set(value) = prefs.edit().putStringSet(KEY_SUBSCRIBED_CHANNELS, value).apply()
 
     fun getWatchHistory(): List<VideoItem> {
@@ -443,7 +438,6 @@ class SettingsManager(context: Context) {
         private const val KEY_PLAYBACK_QUALITY = "playback_quality"
         private const val KEY_PLAYBACK_SUBTITLES = "playback_subtitles"
         private const val KEY_SHOW_CONTINUE_WATCHING_ON_HOME = "show_continue_watching_on_home"
-        private const val KEY_CONTINUE_WATCH_FULLSCREEN = "continue_watch_fullscreen"
         private const val KEY_LOCAL_PROFILE_NAME = "local_profile_name"
         private const val KEY_LOCAL_PROFILE_AVATAR = "local_profile_avatar"
         private const val KEY_LIKED_VIDEOS = "liked_video_ids"

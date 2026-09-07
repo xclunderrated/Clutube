@@ -86,6 +86,8 @@ import com.example.ui.components.EditProfileDialog
 import com.example.ui.components.FittedMediaThumbnail
 import com.example.ui.components.LocalProfileAvatar
 import com.example.ui.components.OfflineVideoPlayer
+import com.example.ui.components.PendingStudioPlaceholder
+import com.example.ui.components.isStudioPending
 import com.example.ui.theme.YTBlueVerified
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
@@ -850,7 +852,6 @@ private fun SavedVideoRow(
                     .width(132.dp)
                     .aspectRatio(16f / 9f),
                 imagePreset = ImagePreset.COMPACT_THUMBNAIL,
-                preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
                 isWatched = false,
                 shape = RoundedCornerShape(6.dp)
             ) {
@@ -884,17 +885,34 @@ private fun SavedVideoRow(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = if (video.mediaType == MediaType.TV_SHOW) {
-                        "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)} • ${video.channelName}"
-                    } else {
-                        video.channelName
-                    },
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                val youStudioPending = isStudioPending(video.channelName)
+                if (video.mediaType == MediaType.TV_SHOW && !youStudioPending) {
+                    Text(
+                        text = "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)} • ${video.channelName}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else if (video.mediaType == MediaType.TV_SHOW) {
+                    Text(
+                        text = "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else if (youStudioPending) {
+                    PendingStudioPlaceholder(width = 90.dp, height = 12.dp)
+                } else {
+                    Text(
+                        text = video.channelName,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Text(
                     text = if (!progressLabel.isNullOrBlank()) {
                         "$progressLabel • Saved"
@@ -974,7 +992,6 @@ private fun HistoryCard(
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.COMPACT_THUMBNAIL,
-            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             shape = HistoryCardShape
         ) {
@@ -1009,18 +1026,37 @@ private fun HistoryCard(
             lineHeight = 16.sp
         )
 
-        Text(
-            text = if (video.mediaType == MediaType.TV_SHOW) {
-                "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)} • ${video.channelName}"
-            } else {
-                video.channelName
-            },
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Normal,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        val historyStudioPending = isStudioPending(video.channelName)
+        if (video.mediaType == MediaType.TV_SHOW && !historyStudioPending) {
+            Text(
+                text = "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)} • ${video.channelName}",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        } else if (video.mediaType == MediaType.TV_SHOW) {
+            Text(
+                text = "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        } else if (historyStudioPending) {
+            PendingStudioPlaceholder(width = 80.dp, height = 11.dp)
+        } else {
+            Text(
+                text = video.channelName,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
 
         if (entry.completed) {
             Text(

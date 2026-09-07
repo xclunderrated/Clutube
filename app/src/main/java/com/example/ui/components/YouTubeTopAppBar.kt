@@ -111,19 +111,22 @@ fun YouTubeTopAppBar(
                 )
             }
 
-            IconButton(
-                onClick = onCastClick ?: {},
-                enabled = onCastClick != null,
-                modifier = Modifier
-                    .size(34.dp)
-                    .testTag("cast_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Cast,
-                    contentDescription = if (onCastClick != null) "Cast" else "Cast unavailable locally",
-                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
-                    modifier = Modifier.size(18.dp)
-                )
+            // Cast is local-only unsupported: hide the button entirely when
+            // no handler is provided instead of showing a disabled stub.
+            if (onCastClick != null) {
+                IconButton(
+                    onClick = onCastClick,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("cast_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Cast,
+                        contentDescription = "Cast",
+                        tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
 
             IconButton(

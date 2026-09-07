@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.WatchLater
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.DropdownMenu
@@ -33,7 +34,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,7 +45,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.testTag
@@ -61,9 +60,11 @@ import com.example.model.playbackKey
 import com.example.ui.theme.YTBlueVerified
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
+import kotlin.math.roundToInt
 
 private val ThumbnailShape = RoundedCornerShape(12.dp)
 private val BadgeShape = RoundedCornerShape(4.dp)
+// Bottom-only scrim (40% height via alignment) — cheaper than full-fill gradient.
 private val CardBottomGradient = Brush.verticalGradient(
     colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.45f))
 )
@@ -98,15 +99,22 @@ fun VideoCard(
     }
 
     val haptics = LocalHapticFeedback.current
-    val animatedDim by animateFloatAsState(
-        targetValue = if (isWatched) 0.52f else 1f,
-        label = "watched_dim"
-    )
-    // Unified badge text: TV shows show S:E, movies show duration, others show duration.
-    // Never render the literal "TV SERIES" as a duration badge.
-    val badgeText: String? = remember(video) {
+    // Static dim passed straight to thumbnail (no per-card animation).
+    // Watched toggles are rare; snap is invisible at 0.52f vs animated.
+    val dimAlpha = if (isWatched) 0.52f else 1f
+    // Badge text: movies show the real length (2h 14m) once enrichment
+    // resolves it; series show totals as "S4 - 10 ep". Resume cards (with
+    // progress) keep the S:E position. Nothing fake is ever rendered —
+    // unknown stays hidden instead of showing S1:E1 or "TV SERIES".
+    val badgeText: String? = remember(video, progressFraction, continueLabel) {
         if (video.mediaType == MediaType.TV_SHOW) {
-            "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}"
+            if (video.totalSeasons > 0 && video.totalEpisodes > 0) {
+                "S${video.totalSeasons} - ${video.totalEpisodes} ep"
+            } else if (progressFraction != null || !continueLabel.isNullOrBlank()) {
+                "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}"
+            } else {
+                null
+            }
         } else {
             video.duration.takeUnless {
                 it.isBlank() || it.equals("TV SERIES", ignoreCase = true)
@@ -128,9 +136,10 @@ fun VideoCard(
             .testTag("video_card_${video.id}")
     ) {
         // Thumbnail Box with 12.dp rounded corners matching Morphe screenshot
-        val formattedRating = video.rating
-            ?.takeIf { it > 0 }
-            ?.let { String.format(java.util.Locale.US, "%.1f", it) }
+        // IMDb-style rating renders below the channel line as star + X/10.
+        val ratingOutOfTen = remember(video.rating) {
+            video.rating?.takeIf { it > 0 }?.let { "${it.roundToInt().coerceIn(1, 10)}/10" }
+        }
 
         FittedMediaThumbnail(
             thumbnailUrl = video.thumbnailUrl,
@@ -141,17 +150,16 @@ fun VideoCard(
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.THUMBNAIL,
-            // Catalog movies/series show the official 2:3 poster WITH the
-            // title, centered uncropped over the 16:9 scene (no bars/crop).
-            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
-            dimAlpha = animatedDim,
+            dimAlpha = dimAlpha,
             shape = ThumbnailShape
         ) {
-            // Subtle gradient overlay at bottom
+            // Subtle gradient overlay at bottom only (40% height, not full-fill)
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .align(Alignment.BottomStart)
                     .background(CardBottomGradient)
             )
 
@@ -263,9 +271,14 @@ fun VideoCard(
                 .padding(horizontal = 4.dp, vertical = 8.dp),
             verticalAlignment = Alignment.Top
         ) {
-            // Channel Avatar
+            // Channel Avatar — fall back to the title's own poster art when
+            // the feed item has no studio avatar yet (list responses carry
+            // no company info; the real studio logo lands on open via
+            // fetchFullMediaDetails). Never an empty circle.
             StudioLogoAvatar(
-                logoUrl = video.channelAvatarUrl,
+                logoUrl = video.channelAvatarUrl.takeIf { it.isNotBlank() }
+                    ?: video.posterUrl?.takeIf { it.isNotBlank() }
+                    ?: video.thumbnailUrl.takeIf { it.isNotBlank() },
                 contentDescription = video.channelName,
                 modifier = Modifier
                     .size(32.dp)
@@ -292,35 +305,29 @@ fun VideoCard(
                         raw
                     }
                 }
-                Row(verticalAlignment = Alignment.Top) {
-                    Text(
-                        text = displayTitle,
-                        modifier = Modifier.weight(1f),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 18.sp,
-                        letterSpacing = 0.sp
-                    )
-                    if (!formattedRating.isNullOrBlank()) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        ImdbRatingBadge(
-                            rating = formattedRating,
-                            compact = true
-                        )
-                    }
-                }
+                Text(
+                    text = displayTitle,
+                    modifier = Modifier.fillMaxWidth(),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 18.sp,
+                    letterSpacing = 0.sp
+                )
 
                 Spacer(modifier = Modifier.height(2.dp))
 
-                // Single-line YouTube metadata: Studio • Year (exactly once —
-                // publishedAt duplicates the year, so it is skipped then).
-                // The media-type tag sits right-aligned in quiet muted text.
-                val metaLine = remember(video, releaseYear, continueLabel) {
+                // YouTube-style metadata: the studio name slot shows a shimmer
+                // placeholder until enrichment resolves it — the "TMDB Catalog"
+                // placeholder string is never rendered. Year/views/date (all
+                // real data) render immediately.
+                val studioPending = remember(video.channelName) {
+                    isStudioPending(video.channelName)
+                }
+                val metaTail = remember(video, releaseYear, continueLabel) {
                     buildList {
-                        add(video.channelName)
                         if (!releaseYear.isNullOrBlank()) add(releaseYear)
                         if (!video.views.isBlank()) add(video.views)
                         val published = video.publishedAt.takeIf { it.isNotBlank() }
@@ -338,17 +345,46 @@ fun VideoCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = channelClickModifier
                 ) {
-                    Text(
-                        text = metaLine,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        lineHeight = 15.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    if (video.isVerified) {
+                    if (studioPending) {
+                        PendingStudioPlaceholder()
+                    } else {
+                        Text(
+                            text = video.channelName,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+                    if (metaTail.isNotBlank()) {
+                        if (studioPending) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = metaTail,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                        } else {
+                            Text(
+                                text = " • $metaTail",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    if (video.isVerified && !studioPending) {
                         Spacer(modifier = Modifier.width(4.dp))
                         Icon(
                             imageVector = Icons.Default.CheckCircle,
@@ -366,6 +402,32 @@ fun VideoCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                             letterSpacing = 0.6.sp,
                             maxLines = 1
+                        )
+                    }
+                }
+                // IMDb rating below the channel line: amber star + X/10,
+                // quiet YouTube-style metadata text.
+                if (!ratingOutOfTen.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.testTag("video_rating_${video.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            tint = Color(0xFFFFC107),
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = ratingOutOfTen,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

@@ -53,6 +53,8 @@ import com.example.model.VideoItem
 import com.example.model.WatchHistoryEntry
 import com.example.model.formatPlaybackTime
 import com.example.ui.components.FittedMediaThumbnail
+import com.example.ui.components.PendingStudioPlaceholder
+import com.example.ui.components.isStudioPending
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
 import com.example.util.rememberThumbnailRequestWithFallback
@@ -263,7 +265,6 @@ private fun HistoryEntryRow(
                     .width(140.dp)
                     .aspectRatio(16f / 9f),
                 imagePreset = ImagePreset.COMPACT_THUMBNAIL,
-                preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
                 isWatched = false,
                 shape = RoundedCornerShape(8.dp)
             ) {
@@ -291,19 +292,29 @@ private fun HistoryEntryRow(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = if (video.mediaType == MediaType.TV_SHOW) {
-                        "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}"
-                    } else {
-                        video.channelName
-                    },
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Normal,
-                    lineHeight = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (video.mediaType == MediaType.TV_SHOW) {
+                    Text(
+                        text = "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Normal,
+                        lineHeight = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else if (isStudioPending(video.channelName)) {
+                    PendingStudioPlaceholder(width = 80.dp, height = 12.dp)
+                } else {
+                    Text(
+                        text = video.channelName,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Normal,
+                        lineHeight = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 if (entry.durationSeconds > 0L) {
                     Text(
                         text = if (entry.completed) {

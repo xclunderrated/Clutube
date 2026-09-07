@@ -31,11 +31,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +53,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -464,7 +469,8 @@ fun YouTubeApp(
         if (!isMobileLaunch) {
             showLaunchIntro = false
         } else if (showLaunchIntro) {
-            kotlinx.coroutines.delay(900L)
+            // 400ms max (was 900ms blocking first feed on phones).
+            kotlinx.coroutines.delay(400L)
             showLaunchIntro = false
         }
     }
@@ -475,10 +481,10 @@ fun YouTubeApp(
         (activity as? MainActivity)?.requestNotificationPermissionIfNeeded()
     }
 
-    // Continue Watching auto-fullscreen handoff: resumeWatch/playVideo set
-    // pendingFullscreenKey for movies/series. Enter immersive landscape
-    // immediately while the embed loads, then request true native fullscreen
-    // (provider onShowCustomView) once the first usable snapshot arrives.
+    // Auto-fullscreen handoff: playVideo(autoFullscreen = true) sets
+    // pendingFullscreenKey. Enter immersive landscape immediately while
+    // the embed loads, then request true native fullscreen (provider
+    // onShowCustomView) once the first usable snapshot arrives.
     // ComingSoon/unreleased, PiP, errors and manual exits clear the key.
     val pendingFullscreenKey = uiState.pendingFullscreenKey
     val pendingVideoKey = uiState.currentPlayingVideo?.playbackKey()
@@ -663,7 +669,22 @@ fun YouTubeApp(
                             .fillMaxSize()
                             .padding(innerPadding)
                     ) {
-                        when (uiState.selectedTab) {
+                        // Premium tab handoff: YouTube-like subtle fade+scale,
+                        // scroll + images preserved per tab via SaveableState.
+                        // (Was instant cut + full reset on every tab change.)
+                        val tabStateHolder = rememberSaveableStateHolder()
+                        AnimatedContent(
+                            targetState = uiState.selectedTab,
+                            transitionSpec = {
+                                (fadeIn(tween(200)) + scaleIn(
+                                    initialScale = 0.98f,
+                                    animationSpec = tween(200)
+                                )) togetherWith fadeOut(tween(150))
+                            },
+                            label = "tab_switch"
+                        ) { tab ->
+                            tabStateHolder.SaveableStateProvider(tab) {
+                        when (tab) {
                             0 -> HomeScreen(
                                 videos = uiState.videos,
                                 continueWatching = uiState.continueWatching,
@@ -684,6 +705,7 @@ fun YouTubeApp(
                                 onVideoClick = { viewModel.playVideo(it, expand = true) },
                                 onContinueWatchingClick = { viewModel.resumeWatch(it, expand = true) },
                                 onRemoveContinueWatching = { viewModel.removeWatchHistoryEntry(it.key) },
+                                  onEnsureStudios = { viewModel.ensureFeedStudios(it) },
                                  onSaveToWatchLater = { viewModel.toggleSave(it.id) },
                                  onShare = { shareVideo(context, it) },
                                  onAddToQueue = { viewModel.addToQueue(it) },
@@ -746,7 +768,8 @@ fun YouTubeApp(
                                   },
                                   savedVideoIds = uiState.savedVideoIds,
                                   progressFractions = progressFractions,
-                                  continueLabels = continueLabels
+                                  continueLabels = continueLabels,
+                                  isTabletLayout = isTablet
                              )
 
                             3 -> NotificationsScreen(
@@ -799,13 +822,19 @@ fun YouTubeApp(
                                 onSubtitleTrackChanged = { id, trackId -> viewModel.setSubtitleTrack(id, trackId) }
                             )
                         }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // Fullscreen Search Overlay
-        if (uiState.isSearching) {
+        // Fullscreen Search Overlay (YouTube-like subtle fade+rise, was instant cut)
+        AnimatedVisibility(
+            visible = uiState.isSearching,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 24 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(150)) { 16 }
+        ) {
             SearchScreen(
                 query = uiState.searchQuery,
                 searchResults = uiState.searchResults,
@@ -834,17 +863,20 @@ fun YouTubeApp(
                      }
                      viewModel.toggleReleaseAlert(it)
                  },
-                 onRemoveSearchHistory = { viewModel.removeSearchHistory(it) },
-                  onClearSearchHistory = { viewModel.clearSearchHistory() },
-                  onDownloadVideo = { viewModel.downloadVideoFromMenu(it) },
-                  savedVideoIds = uiState.savedVideoIds,
-                  progressFractions = progressFractions,
-                  continueLabels = continueLabels,
-                  onVoiceSearch = { viewModel.submitSearch(uiState.searchQuery) }
-            )
+                  onRemoveSearchHistory = { viewModel.removeSearchHistory(it) },
+                   onClearSearchHistory = { viewModel.clearSearchHistory() },
+                   onDownloadVideo = { viewModel.downloadVideoFromMenu(it) },
+                   savedVideoIds = uiState.savedVideoIds,
+                   progressFractions = progressFractions,
+                   continueLabels = continueLabels
+             )
         }
 
-        if (uiState.showHistoryScreen) {
+        AnimatedVisibility(
+            visible = uiState.showHistoryScreen,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 24 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(150)) { 16 }
+        ) {
             HistoryScreen(
                 entries = uiState.watchHistory,
                 onBack = { viewModel.setShowHistoryScreen(false) },
@@ -855,7 +887,11 @@ fun YouTubeApp(
             )
         }
 
-        if (uiState.showSettingsScreen) {
+        AnimatedVisibility(
+            visible = uiState.showSettingsScreen,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 24 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(150)) { 16 }
+        ) {
             SettingsScreen(
                 playbackPreferences = uiState.playbackPreferences,
                 onQualitySelected = { viewModel.setPlaybackQuality(it) },
@@ -864,8 +900,6 @@ fun YouTubeApp(
                 onToggleAutoNextEpisode = { viewModel.toggleAutoNextEpisode() },
                 showContinueWatchingOnHome = uiState.showContinueWatchingOnHome,
                 onSetContinueWatchingOnHome = { viewModel.setShowContinueWatchingOnHome(it) },
-                continueWatchFullscreen = uiState.continueWatchFullscreen,
-                onSetContinueWatchFullscreen = { viewModel.setContinueWatchFullscreen(it) },
                 deviceLayoutMode = uiState.deviceLayoutMode,
                 onSelectDeviceLayoutMode = { viewModel.setDeviceLayoutMode(it) },
                 releaseNotificationsEnabled = uiState.releaseNotificationsEnabled,
@@ -888,7 +922,11 @@ fun YouTubeApp(
             )
         }
 
-        if (uiState.showDownloadsScreen) {
+        AnimatedVisibility(
+            visible = uiState.showDownloadsScreen,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 24 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(150)) { 16 }
+        ) {
             DownloadsScreen(
                 downloads = uiState.downloads,
                 activeSpeeds = uiState.activeDownloadSpeeds,
@@ -927,6 +965,34 @@ fun YouTubeApp(
                 val isDisliked = uiState.dislikedVideoIds.contains(video.id)
                 val isSubscribed = uiState.subscribedChannelNames.contains(video.channelName)
                 val isSaved = uiState.savedVideoIds.contains(video.id)
+                // Per-season watched counts for the episode chips. tvEpisodes
+                // only holds the selected season, so totals are known there;
+                // other seasons contribute watched counts from completed
+                // history entries for this show.
+                val episodeWatchedCounts = remember(video.tmdbId, video.id, uiState.watchHistory) {
+                    val canonicalIds = setOfNotNull(video.tmdbId?.trim(), video.id.trim())
+                    uiState.watchHistory
+                        .asSequence()
+                        .filter { it.completed && it.video.mediaType == MediaType.TV_SHOW }
+                        .filter {
+                            canonicalIds.contains(it.video.tmdbId?.trim()) ||
+                                canonicalIds.contains(it.video.id.trim())
+                        }
+                        .groupBy { it.video.currentSeason.coerceAtLeast(1) }
+                        .mapValues { (_, entries) ->
+                            entries.distinctBy { it.video.currentEpisode.coerceAtLeast(1) }.size
+                        }
+                }
+                val episodeTotals = remember(uiState.tvEpisodes, uiState.selectedSeason) {
+                    if (uiState.tvEpisodes.isNotEmpty()) {
+                        mapOf(
+                            uiState.selectedSeason to
+                                uiState.tvEpisodes.distinctBy { it.episodeNumber }.size
+                        )
+                    } else {
+                        emptyMap()
+                    }
+                }
 
                 WatchScreen(
                     video = video,
@@ -969,6 +1035,13 @@ fun YouTubeApp(
                      onOpenChannel = { viewModel.openChannel(it) },
                     onSelectSeason = { viewModel.selectTvSeason(it) },
                     onSelectEpisode = { season, episode -> viewModel.selectTvEpisode(season, episode) },
+                    onQueueEpisode = { season, episode -> viewModel.queueEpisode(season, episode) },
+                    isEpisodeQueued = { season, episode -> viewModel.isEpisodeQueued(season, episode) },
+                    onPlayEpisodeNext = { season, episode -> viewModel.playEpisodeNext(season, episode) },
+                    onToggleEpisodeWatched = { season, episode -> viewModel.toggleEpisodeWatched(season, episode) },
+                    isEpisodeWatched = { season, episode -> viewModel.isEpisodeWatched(season, episode) },
+                    watchedCountBySeason = episodeWatchedCounts,
+                    totalCountBySeason = episodeTotals,
                      onSelectVideo = { viewModel.playVideo(it, expand = true) },
                      onSaveToWatchLater = { viewModel.toggleSave(it.id) },
                      onShare = { shareVideo(context, it) },
@@ -1063,7 +1136,12 @@ fun YouTubeApp(
 
         // Keep the channel page above the full Watch screen. This also makes
         // channel clicks from Watch behave the same as channel clicks elsewhere.
-        if (uiState.isChannelScreenOpen && uiState.selectedChannel != null) {
+        AnimatedVisibility(
+            visible = uiState.isChannelScreenOpen && uiState.selectedChannel != null,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 24 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(150)) { 16 }
+        ) {
+          if (uiState.selectedChannel != null) {
             val channel = uiState.selectedChannel!!
             val isSubscribed = uiState.subscribedChannelNames.contains(channel.name)
             ChannelScreen(
@@ -1093,6 +1171,7 @@ fun YouTubeApp(
                  onDownloadVideo = { viewModel.downloadVideoFromMenu(it) },
                 isTabletLayout = isTablet
             )
+          }
         }
 
         // Keep the mini-player above channel content. Opening a channel
@@ -1125,8 +1204,7 @@ fun YouTubeApp(
                     resumePositionSeconds = uiState.pendingResumeOverrideKey
                         ?.takeIf { it == uiState.currentPlayingVideo!!.playbackKey() }
                         ?.let { uiState.pendingResumeOverrideSeconds }
-                        ?: uiState.currentHistoryEntry?.positionSeconds?.toDouble() ?: 0.0,
-                    progressFraction = uiState.currentHistoryEntry?.progressFraction ?: 0f
+                        ?: uiState.currentHistoryEntry?.positionSeconds?.toDouble() ?: 0.0
                 )
             }
         }

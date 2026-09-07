@@ -25,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -34,19 +33,20 @@ import com.example.ui.theme.YouTubeRed
 
 /**
  * A short, quiet launch moment inspired by YouTube's branded handoff.
- * It intentionally uses the app's own Clutube mark and disappears quickly.
+ * 260ms fade+scale (was 520ms + 20dp shadow offscreen buffer that stalled
+ * first feed). No shadow: clip alone, single cheap layer.
  */
 @Composable
 fun ClutubeLaunchIntro(
     modifier: Modifier = Modifier
 ) {
-    var targetScale by remember { mutableStateOf(0.82f) }
+    var targetScale by remember { mutableStateOf(0.96f) }
     LaunchedEffect(Unit) {
         targetScale = 1f
     }
     val logoScale by animateFloatAsState(
         targetValue = targetScale,
-        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
         label = "launch_logo_scale"
     )
 
@@ -63,8 +63,8 @@ fun ClutubeLaunchIntro(
                     .graphicsLayer {
                         scaleX = logoScale
                         scaleY = logoScale
+                        alpha = 0.4f + 0.6f * logoScale
                     }
-                    .shadow(20.dp, RoundedCornerShape(24.dp))
                     .clip(RoundedCornerShape(24.dp))
                     .background(YouTubeRed),
                 contentAlignment = Alignment.Center

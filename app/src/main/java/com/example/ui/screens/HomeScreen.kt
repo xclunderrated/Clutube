@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.animateItem
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -83,13 +84,18 @@ import com.example.model.titleGroupKey
 import com.example.model.releaseAlertId
 import com.example.ui.components.FilterPillRow
 import com.example.ui.components.FittedMediaThumbnail
+import com.example.ui.components.PendingStudioPlaceholder
+import com.example.ui.components.SharedShimmerHost
 import com.example.ui.components.VideoCard
 import com.example.ui.components.VideoCardSkeleton
+import com.example.ui.components.isStudioPending
+import com.example.ui.motion.MotionTokens
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
 import com.example.util.rememberThumbnailRequestWithFallback
 
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 private val HeroBadgeShape = RoundedCornerShape(4.dp)
@@ -134,6 +140,7 @@ fun HomeScreen(
     progressFractions: Map<String, Float> = emptyMap(),
     continueLabels: Map<String, String> = emptyMap(),
     onRemoveContinueWatching: (WatchHistoryEntry) -> Unit = {},
+    onEnsureStudios: (List<String>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(
@@ -214,6 +221,36 @@ fun HomeScreen(
             }
         }
 
+        // Visible-card studio attribution: report on-screen feed ids so the
+        // ViewModel can resolve real studio name + logo for them (cached per
+        // TMDB id, so scrolling never refetches). Item keys are the video ids
+        // for feed cards; shelf/skeleton keys are ignored via the lookup map.
+        val feedVideoById = remember(feedVideos) { feedVideos.associateBy { it.id } }
+        val latestOnEnsureStudios = rememberUpdatedState(onEnsureStudios)
+        // Throttled: enrichment fires at most ~4x/sec and never mid-fling.
+        // Previously every visible-key change during scroll hit the ViewModel
+        // → enrichment → studio flip recompose per card (scroll stutter).
+        LaunchedEffect(listState) {
+            snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.key } }
+                .distinctUntilChanged()
+                .debounce(250L)
+                .collect { keys ->
+                    if (listState.isScrollInProgress) return@collect
+                    val ids = keys.mapNotNull { (it as? String)?.let(feedVideoById::get)?.id }
+                    if (ids.isNotEmpty()) latestOnEnsureStudios.value(ids)
+                }
+        }
+        LaunchedEffect(gridState) {
+            snapshotFlow { gridState.layoutInfo.visibleItemsInfo.map { it.key } }
+                .distinctUntilChanged()
+                .debounce(250L)
+                .collect { keys ->
+                    if (gridState.isScrollInProgress) return@collect
+                    val ids = keys.mapNotNull { (it as? String)?.let(feedVideoById::get)?.id }
+                    if (ids.isNotEmpty()) latestOnEnsureStudios.value(ids)
+                }
+        }
+
         Column(modifier = Modifier.fillMaxSize()) {
             // Topic Filters
             FilterPillRow(
@@ -285,9 +322,11 @@ fun HomeScreen(
                     .weight(1f)
                     .fillMaxWidth()
             ) {
+                // One shared shimmer clock per feed (was ~24 concurrent).
+                SharedShimmerHost {
                 // Video Feed
                 if (visibleVideos.isEmpty() && visibleRecentWatched.isEmpty() && isLoading) {
-                // Initial Load Animated Shimmer Feed (YouTube-style Shimmer Skeletons)
+                // Initial Load (capped: 3 sweeps max, was 8 lists of 4 anims each)
                 if (isWide) {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(gridColumns),
@@ -299,10 +338,7 @@ fun HomeScreen(
                             .padding(horizontal = 14.dp)
                             .testTag("home_skeleton_grid")
                     ) {
-                        items(count = 2, contentType = { "video_skeleton" }) {
-                            VideoCardSkeleton()
-                        }
-                        items(count = 6, contentType = { "video_skeleton" }) {
+                        items(count = 3, contentType = { "video_skeleton" }) {
                             VideoCardSkeleton()
                         }
                     }
@@ -312,10 +348,7 @@ fun HomeScreen(
                             .fillMaxSize()
                             .testTag("home_skeleton_list")
                     ) {
-                        items(count = 2, contentType = { "video_skeleton" }) {
-                            VideoCardSkeleton()
-                        }
-                        items(count = 4, contentType = { "video_skeleton" }) {
+                        items(count = 3, contentType = { "video_skeleton" }) {
                             VideoCardSkeleton()
                         }
                     }
@@ -382,22 +415,23 @@ fun HomeScreen(
                         contentType = { "recent_watched_card" }
                     ) { entry ->
                         val video = entry.video
-                        VideoCard(
+                        val onResume = remember(entry.key, onContinueWatchingClick) { { onContinueWatchingClick(entry) } }
+                        RememberedVideoCard(
                             video = video,
-                            onClick = { onContinueWatchingClick(entry) },
-                            onSaveToWatchLater = { onSaveToWatchLater(video) },
-                            onShare = { onShare(video) },
-                            onDownload = onDownloadVideo?.let { { it(video) } },
-                            onAddToQueue = { onAddToQueue(video) },
-                            isWatched = video.id in watchedVideoIds,
-                            isSaved = video.id in savedVideoIds,
-                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
-                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
-                            onToggleWatched = { onToggleWatched(video) },
-                            onNotInterested = { onNotInterested(video) },
-                            onNotRecommendChannel = { onNotRecommendChannel(video) },
-                            isReleaseAlertActive = releaseAlertId(video) in releaseAlertIds,
-                            onToggleReleaseAlert = { onToggleReleaseAlert(video) }
+                            onVideoClick = { onResume() },
+                            onSaveToWatchLater = onSaveToWatchLater,
+                            onShare = onShare,
+                            onDownloadVideo = onDownloadVideo,
+                            onAddToQueue = onAddToQueue,
+                            onToggleWatched = onToggleWatched,
+                            onNotInterested = onNotInterested,
+                            onNotRecommendChannel = onNotRecommendChannel,
+                            onToggleReleaseAlert = onToggleReleaseAlert,
+                            watchedVideoIds = watchedVideoIds,
+                            savedVideoIds = savedVideoIds,
+                            progressFractions = progressFractions,
+                            continueLabels = continueLabels,
+                            releaseAlertIds = releaseAlertIds
                         )
                     }
 
@@ -407,29 +441,22 @@ fun HomeScreen(
                         key = { it.id },
                         contentType = { "video_card" }
                     ) { video ->
-                        val onClick = remember(video.id, onVideoClick) { { onVideoClick(video) } }
-                        val onSave = remember(video.id, onSaveToWatchLater) { { onSaveToWatchLater(video) } }
-                        val onShareLambda = remember(video.id, onShare) { { onShare(video) } }
-                        val onDownloadLambda = remember(video.id, onDownloadVideo) {
-                            onDownloadVideo?.let { { it(video) } }
-                        }
-
-                        VideoCard(
+                        RememberedVideoCard(
                             video = video,
-                            onClick = onClick,
-                            onSaveToWatchLater = onSave,
-                            onShare = onShareLambda,
-                            onDownload = onDownloadLambda,
-                            onAddToQueue = { onAddToQueue(video) },
-                            isWatched = video.id in watchedVideoIds,
-                            isSaved = video.id in savedVideoIds,
-                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
-                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
-                            onToggleWatched = { onToggleWatched(video) },
-                            onNotInterested = { onNotInterested(video) },
-                            onNotRecommendChannel = { onNotRecommendChannel(video) },
-                            isReleaseAlertActive = releaseAlertId(video) in releaseAlertIds,
-                            onToggleReleaseAlert = { onToggleReleaseAlert(video) }
+                            onVideoClick = onVideoClick,
+                            onSaveToWatchLater = onSaveToWatchLater,
+                            onShare = onShare,
+                            onDownloadVideo = onDownloadVideo,
+                            onAddToQueue = onAddToQueue,
+                            onToggleWatched = onToggleWatched,
+                            onNotInterested = onNotInterested,
+                            onNotRecommendChannel = onNotRecommendChannel,
+                            onToggleReleaseAlert = onToggleReleaseAlert,
+                            watchedVideoIds = watchedVideoIds,
+                            savedVideoIds = savedVideoIds,
+                            progressFractions = progressFractions,
+                            continueLabels = continueLabels,
+                            releaseAlertIds = releaseAlertIds
                         )
                     }
 
@@ -455,29 +482,22 @@ fun HomeScreen(
                         key = { it.id },
                         contentType = { "video_card" }
                     ) { video ->
-                        val onClick = remember(video.id, onVideoClick) { { onVideoClick(video) } }
-                        val onSave = remember(video.id, onSaveToWatchLater) { { onSaveToWatchLater(video) } }
-                        val onShareLambda = remember(video.id, onShare) { { onShare(video) } }
-                        val onDownloadLambda = remember(video.id, onDownloadVideo) {
-                            onDownloadVideo?.let { { it(video) } }
-                        }
-
-                        VideoCard(
+                        RememberedVideoCard(
                             video = video,
-                            onClick = onClick,
-                            onSaveToWatchLater = onSave,
-                            onShare = onShareLambda,
-                            onDownload = onDownloadLambda,
-                            onAddToQueue = { onAddToQueue(video) },
-                            isWatched = video.id in watchedVideoIds,
-                            isSaved = video.id in savedVideoIds,
-                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
-                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
-                            onToggleWatched = { onToggleWatched(video) },
-                            onNotInterested = { onNotInterested(video) },
-                            onNotRecommendChannel = { onNotRecommendChannel(video) },
-                            isReleaseAlertActive = releaseAlertId(video) in releaseAlertIds,
-                            onToggleReleaseAlert = { onToggleReleaseAlert(video) }
+                            onVideoClick = onVideoClick,
+                            onSaveToWatchLater = onSaveToWatchLater,
+                            onShare = onShare,
+                            onDownloadVideo = onDownloadVideo,
+                            onAddToQueue = onAddToQueue,
+                            onToggleWatched = onToggleWatched,
+                            onNotInterested = onNotInterested,
+                            onNotRecommendChannel = onNotRecommendChannel,
+                            onToggleReleaseAlert = onToggleReleaseAlert,
+                            watchedVideoIds = watchedVideoIds,
+                            savedVideoIds = savedVideoIds,
+                            progressFractions = progressFractions,
+                            continueLabels = continueLabels,
+                            releaseAlertIds = releaseAlertIds
                         )
                     }
 
@@ -533,22 +553,23 @@ fun HomeScreen(
                         contentType = { "recent_watched_card" }
                     ) { entry ->
                         val video = entry.video
-                        VideoCard(
+                        val onResume = remember(entry.key, onContinueWatchingClick) { { onContinueWatchingClick(entry) } }
+                        RememberedVideoCard(
                             video = video,
-                            onClick = { onContinueWatchingClick(entry) },
-                            onSaveToWatchLater = { onSaveToWatchLater(video) },
-                            onShare = { onShare(video) },
-                            onDownload = onDownloadVideo?.let { { it(video) } },
-                            onAddToQueue = { onAddToQueue(video) },
-                            isWatched = video.id in watchedVideoIds,
-                            isSaved = video.id in savedVideoIds,
-                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
-                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
-                            onToggleWatched = { onToggleWatched(video) },
-                            onNotInterested = { onNotInterested(video) },
-                            onNotRecommendChannel = { onNotRecommendChannel(video) },
-                            isReleaseAlertActive = releaseAlertId(video) in releaseAlertIds,
-                            onToggleReleaseAlert = { onToggleReleaseAlert(video) }
+                            onVideoClick = { onResume() },
+                            onSaveToWatchLater = onSaveToWatchLater,
+                            onShare = onShare,
+                            onDownloadVideo = onDownloadVideo,
+                            onAddToQueue = onAddToQueue,
+                            onToggleWatched = onToggleWatched,
+                            onNotInterested = onNotInterested,
+                            onNotRecommendChannel = onNotRecommendChannel,
+                            onToggleReleaseAlert = onToggleReleaseAlert,
+                            watchedVideoIds = watchedVideoIds,
+                            savedVideoIds = savedVideoIds,
+                            progressFractions = progressFractions,
+                            continueLabels = continueLabels,
+                            releaseAlertIds = releaseAlertIds
                         )
                     }
 
@@ -558,29 +579,22 @@ fun HomeScreen(
                         key = { it.id },
                         contentType = { "video_card" }
                     ) { video ->
-                        val onClick = remember(video.id, onVideoClick) { { onVideoClick(video) } }
-                        val onSave = remember(video.id, onSaveToWatchLater) { { onSaveToWatchLater(video) } }
-                        val onShareLambda = remember(video.id, onShare) { { onShare(video) } }
-                        val onDownloadLambda = remember(video.id, onDownloadVideo) {
-                            onDownloadVideo?.let { { it(video) } }
-                        }
-
-                        VideoCard(
+                        RememberedVideoCard(
                             video = video,
-                            onClick = onClick,
-                            onSaveToWatchLater = onSave,
-                            onShare = onShareLambda,
-                            onDownload = onDownloadLambda,
-                            onAddToQueue = { onAddToQueue(video) },
-                            isWatched = video.id in watchedVideoIds,
-                            isSaved = video.id in savedVideoIds,
-                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
-                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
-                            onToggleWatched = { onToggleWatched(video) },
-                            onNotInterested = { onNotInterested(video) },
-                            onNotRecommendChannel = { onNotRecommendChannel(video) },
-                            isReleaseAlertActive = releaseAlertId(video) in releaseAlertIds,
-                            onToggleReleaseAlert = { onToggleReleaseAlert(video) }
+                            onVideoClick = onVideoClick,
+                            onSaveToWatchLater = onSaveToWatchLater,
+                            onShare = onShare,
+                            onDownloadVideo = onDownloadVideo,
+                            onAddToQueue = onAddToQueue,
+                            onToggleWatched = onToggleWatched,
+                            onNotInterested = onNotInterested,
+                            onNotRecommendChannel = onNotRecommendChannel,
+                            onToggleReleaseAlert = onToggleReleaseAlert,
+                            watchedVideoIds = watchedVideoIds,
+                            savedVideoIds = savedVideoIds,
+                            progressFractions = progressFractions,
+                            continueLabels = continueLabels,
+                            releaseAlertIds = releaseAlertIds
                         )
                     }
 
@@ -602,36 +616,29 @@ fun HomeScreen(
                         key = { it.id },
                         contentType = { "video_card" }
                     ) { video ->
-                        val onClick = remember(video.id, onVideoClick) { { onVideoClick(video) } }
-                        val onSave = remember(video.id, onSaveToWatchLater) { { onSaveToWatchLater(video) } }
-                        val onShareLambda = remember(video.id, onShare) { { onShare(video) } }
-                        val onDownloadLambda = remember(video.id, onDownloadVideo) {
-                            onDownloadVideo?.let { { it(video) } }
-                        }
-
-                        VideoCard(
+                        RememberedVideoCard(
                             video = video,
-                            onClick = onClick,
-                            onSaveToWatchLater = onSave,
-                            onShare = onShareLambda,
-                            onDownload = onDownloadLambda,
-                            onAddToQueue = { onAddToQueue(video) },
-                            isWatched = video.id in watchedVideoIds,
-                            isSaved = video.id in savedVideoIds,
-                            progressFraction = progressFractions[video.playbackKey()] ?: progressFractions[video.titleGroupKey()],
-                            continueLabel = continueLabels[video.playbackKey()] ?: continueLabels[video.titleGroupKey()],
-                            onToggleWatched = { onToggleWatched(video) },
-                            onNotInterested = { onNotInterested(video) },
-                            onNotRecommendChannel = { onNotRecommendChannel(video) },
-                            isReleaseAlertActive = releaseAlertId(video) in releaseAlertIds,
-                            onToggleReleaseAlert = { onToggleReleaseAlert(video) }
+                            onVideoClick = onVideoClick,
+                            onSaveToWatchLater = onSaveToWatchLater,
+                            onShare = onShare,
+                            onDownloadVideo = onDownloadVideo,
+                            onAddToQueue = onAddToQueue,
+                            onToggleWatched = onToggleWatched,
+                            onNotInterested = onNotInterested,
+                            onNotRecommendChannel = onNotRecommendChannel,
+                            onToggleReleaseAlert = onToggleReleaseAlert,
+                            watchedVideoIds = watchedVideoIds,
+                            savedVideoIds = savedVideoIds,
+                            progressFractions = progressFractions,
+                            continueLabels = continueLabels,
+                            releaseAlertIds = releaseAlertIds
                         )
                     }
 
-                    // Bottom Infinite Scroll Loading Shimmer Skeletons
+                    // Bottom Infinite Scroll: 1 skeleton + spinner (was 2 animated).
                     if (isLoadingMore) {
                         items(
-                            count = 2,
+                            count = 1,
                             key = { "list_more_skel_$it" },
                             contentType = { "video_skeleton" }
                         ) {
@@ -647,9 +654,65 @@ fun HomeScreen(
                     }
                 }
                 }
+                } // SharedShimmerHost
             }
         }
     }
+}
+
+@Composable
+private fun RememberedVideoCard(
+    video: com.example.model.VideoItem,
+    onVideoClick: (com.example.model.VideoItem) -> Unit,
+    onSaveToWatchLater: (com.example.model.VideoItem) -> Unit,
+    onShare: (com.example.model.VideoItem) -> Unit,
+    onDownloadVideo: ((com.example.model.VideoItem) -> Unit)?,
+    onAddToQueue: (com.example.model.VideoItem) -> Unit,
+    onToggleWatched: (com.example.model.VideoItem) -> Unit,
+    onNotInterested: (com.example.model.VideoItem) -> Unit,
+    onNotRecommendChannel: (com.example.model.VideoItem) -> Unit,
+    onToggleReleaseAlert: (com.example.model.VideoItem) -> Unit,
+    watchedVideoIds: Set<String>,
+    savedVideoIds: Set<String>,
+    progressFractions: Map<String, Float>,
+    continueLabels: Map<String, String>,
+    releaseAlertIds: Set<String>,
+    modifier: Modifier = Modifier
+) {
+    val onClick = remember(video.id, onVideoClick) { { onVideoClick(video) } }
+    val onSave = remember(video.id, onSaveToWatchLater) { { onSaveToWatchLater(video) } }
+    val onShareLambda = remember(video.id, onShare) { { onShare(video) } }
+    val onDownloadLambda = remember(video.id, onDownloadVideo) {
+        onDownloadVideo?.let { dl -> { dl(video) } }
+    }
+    val onQueue = remember(video.id, onAddToQueue) { { onAddToQueue(video) } }
+    val onWatched = remember(video.id, onToggleWatched) { { onToggleWatched(video) } }
+    val onNotInt = remember(video.id, onNotInterested) { { onNotInterested(video) } }
+    val onNotRec = remember(video.id, onNotRecommendChannel) { { onNotRecommendChannel(video) } }
+    val onAlert = remember(video.id, onToggleReleaseAlert) { { onToggleReleaseAlert(video) } }
+    VideoCard(
+        video = video,
+        onClick = onClick,
+        onSaveToWatchLater = onSave,
+        onShare = onShareLambda,
+        onDownload = onDownloadLambda,
+        onAddToQueue = onQueue,
+        isWatched = video.id in watchedVideoIds,
+        isSaved = video.id in savedVideoIds,
+        progressFraction = progressFractions[video.playbackKey()]
+            ?: progressFractions[video.titleGroupKey()],
+        continueLabel = continueLabels[video.playbackKey()]
+            ?: continueLabels[video.titleGroupKey()],
+        onToggleWatched = onWatched,
+        onNotInterested = onNotInt,
+        onNotRecommendChannel = onNotRec,
+        isReleaseAlertActive = com.example.model.releaseAlertId(video) in releaseAlertIds,
+        onToggleReleaseAlert = onAlert,
+        modifier = modifier.animateItem(
+            fadeInSpec = MotionTokens.mediumTween(),
+            fadeOutSpec = MotionTokens.fastTween()
+        )
+    )
 }
 
 @Composable
@@ -772,7 +835,6 @@ private fun ContinueWatchingCard(
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.COMPACT_THUMBNAIL,
-            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = false,
             shape = ContinueCardShape
         ) {
@@ -840,14 +902,18 @@ private fun ContinueWatchingCard(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Text(
-                    text = video.channelName,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Normal,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (isStudioPending(video.channelName)) {
+                    PendingStudioPlaceholder(width = 80.dp, height = 11.dp)
+                } else {
+                    Text(
+                        text = video.channelName,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 if (entry.durationSeconds > 0L) {
                     Text(

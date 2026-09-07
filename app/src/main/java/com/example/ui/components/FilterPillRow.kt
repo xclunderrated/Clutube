@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -111,8 +112,16 @@ fun FilterPillRow(
                 isSelected -> if (isDarkMode) YTDarkChipActiveText else YTLightChipActiveText
                 else -> if (isDarkMode) YTDarkChipInactiveText else YTLightChipInactiveText
             }
-            val bg by animateColorAsState(targetValue = targetBg, label = "pill_bg")
-            val textColor by animateColorAsState(targetValue = targetText, label = "pill_text")
+            val bg by animateColorAsState(
+                targetValue = targetBg,
+                animationSpec = tween(150),
+                label = "pill_bg"
+            )
+            val textColor by animateColorAsState(
+                targetValue = targetText,
+                animationSpec = tween(150),
+                label = "pill_text"
+            )
 
             val onPillClick = remember(category, onCategorySelected) {
                 {

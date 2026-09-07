@@ -53,6 +53,7 @@ import com.example.model.VideoItem
 import com.example.ui.theme.YTBlueVerified
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
+import kotlin.math.roundToInt
 
 /**
  * Compact, sleek horizontal card designed specifically for "Up Next & Related" side panels on tablets
@@ -77,9 +78,15 @@ fun CompactRelatedVideoCard(
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
-    val badgeText: String? = remember(video) {
+    val badgeText: String? = remember(video, progressFraction, continueLabel) {
         if (video.mediaType == MediaType.TV_SHOW) {
-            "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}"
+            if (video.totalSeasons > 0 && video.totalEpisodes > 0) {
+                "S${video.totalSeasons} - ${video.totalEpisodes} ep"
+            } else if (progressFraction != null || !continueLabel.isNullOrBlank()) {
+                "S${video.currentSeason.coerceAtLeast(1)}:E${video.currentEpisode.coerceAtLeast(1)}"
+            } else {
+                null
+            }
         } else {
             video.duration.takeUnless { it.isBlank() || it.equals("TV SERIES", ignoreCase = true) }
         }
@@ -99,7 +106,7 @@ fun CompactRelatedVideoCard(
             .testTag("compact_related_video_card_${video.id}"),
         verticalAlignment = Alignment.Top
     ) {
-        // Compact 16:9 Thumbnail showing poster WITH name for catalog.
+        // Compact 16:9 Thumbnail displaying uncropped poster with ambient background
         FittedMediaThumbnail(
             thumbnailUrl = video.thumbnailUrl,
             backdropUrl = video.backdropUrl,
@@ -109,7 +116,6 @@ fun CompactRelatedVideoCard(
                 .width(132.dp)
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.COMPACT_THUMBNAIL,
-            preferPoster = video.mediaType == MediaType.MOVIE || video.mediaType == MediaType.TV_SHOW,
             isWatched = isWatched,
             shape = RoundedCornerShape(8.dp)
         ) {
@@ -220,22 +226,29 @@ fun CompactRelatedVideoCard(
 
             Spacer(modifier = Modifier.height(2.dp))
 
+            val studioPending = remember(video.channelName) {
+                isStudioPending(video.channelName)
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                Text(
-                    text = video.channelName,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Normal,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 15.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
+                if (studioPending) {
+                    PendingStudioPlaceholder(width = 90.dp, height = 12.dp)
+                } else {
+                    Text(
+                        text = video.channelName,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                }
 
-                if (video.isVerified) {
+                if (video.isVerified && !studioPending) {
                     Icon(
                         imageVector = Icons.Default.CheckCircle,
                         contentDescription = "Verified",
@@ -251,11 +264,12 @@ fun CompactRelatedVideoCard(
                     ?: video.releaseDateIso?.take(4)?.takeIf { it.all(Char::isDigit) }
             }
             val ratingText = remember(video) {
-                video.rating?.takeIf { it > 0 }?.let { String.format(java.util.Locale.US, "%.1f", it) }
+                video.rating?.takeIf { it > 0 }
+                    ?.let { "★ ${it.roundToInt().coerceIn(1, 10)}/10" }
             }
             val metadata = remember(video, releaseYear, ratingText) {
                 buildList {
-                    if (!ratingText.isNullOrBlank()) add("★ $ratingText")
+                    if (!ratingText.isNullOrBlank()) add(ratingText)
                     if (!releaseYear.isNullOrBlank()) add(releaseYear)
                     if (video.mediaType == MediaType.TV_SHOW) add("TV Series")
                     else if (video.mediaType == MediaType.MOVIE) add("Movie")

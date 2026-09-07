@@ -1285,7 +1285,6 @@ private fun QueuedDownloadCard(
                         .width(72.dp)
                         .aspectRatio(16f / 9f),
                     imagePreset = ImagePreset.COMPACT_THUMBNAIL,
-                    preferPoster = true,
                     shape = RoundedCornerShape(8.dp)
                 )
 
@@ -1613,7 +1612,6 @@ private fun DownloadedEpisodeRow(
                 .width(68.dp)
                 .aspectRatio(16f / 9f),
             imagePreset = ImagePreset.EPISODE_THUMBNAIL,
-            preferPoster = false,
             shape = RoundedCornerShape(6.dp)
         )
 

@@ -16,9 +16,10 @@ import coil.size.Scale
 
 /** Target sizes used by the feed so Coil never decodes a full-resolution source into a small view. */
 enum class ImagePreset(val width: Int, val height: Int) {
-    // Keep enough source detail for large tablet cards while remaining bounded
-    // on phones and in scrolling feeds.
-    THUMBNAIL(640, 360),
+    // Feed cards: 780w lands in the w780 TMDB bucket (retina-sharp on phones,
+    // ~45% cheaper to decode than w1280). Tablets/hero use HERO_THUMBNAIL.
+    THUMBNAIL(780, 440),
+    HERO_THUMBNAIL(1280, 720),
     COMPACT_THUMBNAIL(480, 270),
     EPISODE_THUMBNAIL(480, 270),
     POSTER_CARD(342, 513),
@@ -160,7 +161,7 @@ fun rememberThumbnailRequestWithFallback(
     primaryUrl: String?,
     fallbackUrl: String?,
     preset: ImagePreset = ImagePreset.THUMBNAIL,
-    crossfade: Boolean = true,
+    crossfade: Boolean = false,
     onFallbackTriggered: (() -> Unit)? = null
 ): Pair<ImageRequest, () -> Unit> {
     val context = LocalContext.current

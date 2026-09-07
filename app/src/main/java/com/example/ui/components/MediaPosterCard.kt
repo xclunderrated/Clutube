@@ -97,7 +97,9 @@ fun MediaPosterCard(
             .testTag("poster_card_${video.id}"),
         shape = PosterShape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        // 0 elevation in grids: per-item shadows create offscreen buffers
+        // re-rendered on scroll. Clip alone gives the card shape.
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Box(
             modifier = Modifier

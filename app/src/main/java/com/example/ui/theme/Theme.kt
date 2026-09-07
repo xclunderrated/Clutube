@@ -62,12 +62,15 @@ fun YouTubeTheme(
 ) {
     val colorScheme = if (darkTheme) YTDarkColorScheme else YTLightColorScheme
     val view = LocalView.current
+    // SideEffect reads darkTheme + scheme; window writes are guarded so
+    // unrelated recompositions don't re-hit the window (was every recompose).
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as? Activity)?.window
             window?.let {
-                it.statusBarColor = colorScheme.background.toArgb()
-                it.navigationBarColor = colorScheme.background.toArgb()
+                val bg = colorScheme.background.toArgb()
+                if (it.statusBarColor != bg) it.statusBarColor = bg
+                if (it.navigationBarColor != bg) it.navigationBarColor = bg
                 val controller = WindowCompat.getInsetsController(it, view)
                 controller.isAppearanceLightStatusBars = !darkTheme
                 controller.isAppearanceLightNavigationBars = !darkTheme

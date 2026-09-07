@@ -209,7 +209,6 @@ fun DownloadOptionsSheet(
                         modifier = Modifier
                             .width(64.dp)
                             .aspectRatio(16f / 9f),
-                        preferPoster = target is DownloadTarget.Movie,
                         shape = RoundedCornerShape(6.dp)
                     )
 

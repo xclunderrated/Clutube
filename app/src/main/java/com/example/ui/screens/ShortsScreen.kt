@@ -130,20 +130,24 @@ fun ShortsScreen(
         )
 
         short.trailerVideoId?.takeIf { it.isNotBlank() }?.let { trailerId ->
-            AndroidView(
-                factory = { viewContext ->
-                    TrailerWebView(viewContext).apply { loadTrailer(trailerId) }
-                },
-                update = { trailerView ->
-                    trailerView.loadTrailer(trailerId)
-                    trailerView.setPlaying(isPlaying)
-                    trailerView.setAudioEnabled(audioEnabled)
-                },
-                onRelease = { it.releaseTrailer() },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("short_trailer_player")
-            )
+            // Keyed on trailerId: a new WebView only on short change.
+            // update{} pushes play/audio state only — previously every
+            // recompose re-issued loadTrailer + 6x postDelayed JS evals.
+            androidx.compose.runtime.key(trailerId) {
+                AndroidView(
+                    factory = { viewContext ->
+                        TrailerWebView(viewContext).apply { loadTrailer(trailerId) }
+                    },
+                    update = { trailerView ->
+                        trailerView.setPlaying(isPlaying)
+                        trailerView.setAudioEnabled(audioEnabled)
+                    },
+                    onRelease = { it.releaseTrailer() },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("short_trailer_player")
+                )
+            }
         }
 
         Box(
@@ -374,6 +378,8 @@ fun ShortsScreen(
 private class TrailerWebView(context: android.content.Context) : WebView(context) {
     private var loadedTrailerId: String? = null
     private var audioCommandGeneration = 0
+    private var lastPlaying: Boolean? = null
+    private var lastAudioEnabled: Boolean? = null
 
     init {
         setBackgroundColor(android.graphics.Color.BLACK)
@@ -449,6 +455,8 @@ private class TrailerWebView(context: android.content.Context) : WebView(context
     }
 
     fun setPlaying(playing: Boolean) {
+        if (lastPlaying == playing) return
+        lastPlaying = playing
         val command = if (playing) "playVideo" else "pauseVideo"
         evaluateJavascript(
             """
@@ -464,6 +472,8 @@ private class TrailerWebView(context: android.content.Context) : WebView(context
     }
 
     fun setAudioEnabled(enabled: Boolean) {
+        if (lastAudioEnabled == enabled) return
+        lastAudioEnabled = enabled
         val command = if (enabled) "unMute" else "mute"
         val generation = ++audioCommandGeneration
         // YouTube's iframe API can finish its handshake after the WebView has

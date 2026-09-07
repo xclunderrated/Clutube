@@ -851,7 +851,6 @@ private fun ChannelAboutSection(channel: ChannelItem) {
         if (channel.location.isNotBlank()) {
             AboutInfoRow(label = "Country", value = channel.location)
         }
-        AboutInfoRow(label = "Streaming API", value = "Multi-Server Embed")
     }
 }
 
