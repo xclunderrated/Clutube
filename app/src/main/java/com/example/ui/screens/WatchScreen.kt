@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.animateItem
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -131,10 +130,10 @@ fun WatchScreen(
     onToggleReleaseAlert: () -> Unit = {},
     isEpisodeAlertActive: (Int, Int) -> Boolean = { _, _ -> false },
     onNotifyEpisode: (TmdbEpisodeItem) -> Unit = {},
-    onQueueEpisode: (Int, Int) -> Unit = {},
+    onQueueEpisode: (Int, Int) -> Unit = { _, _ -> },
     isEpisodeQueued: (Int, Int) -> Boolean = { _, _ -> false },
-    onPlayEpisodeNext: (Int, Int) -> Unit = {},
-    onToggleEpisodeWatched: (Int, Int) -> Unit = {},
+    onPlayEpisodeNext: (Int, Int) -> Unit = { _, _ -> },
+    onToggleEpisodeWatched: (Int, Int) -> Unit = { _, _ -> },
     isEpisodeWatched: (Int, Int) -> Boolean = { _, _ -> false },
     watchedCountBySeason: Map<Int, Int> = emptyMap(),
     totalCountBySeason: Map<Int, Int> = emptyMap(),
@@ -426,7 +425,6 @@ fun WatchScreen(
                                     onNotRecommendChannel = onNotRec,
                                     modifier = Modifier
                                         .padding(bottom = 4.dp)
-                                        .animateItem()
                                 )
                             }
                         } else if (isRelatedLoading) {
@@ -599,8 +597,7 @@ fun WatchScreen(
                             ) { relatedRow ->
                                 Row(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .animateItem(),
+                                        .fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     relatedRow.forEach { relatedVideo ->
@@ -689,8 +686,7 @@ fun WatchScreen(
                                     isWatched = relatedVideo.id in watchedVideoIds,
                                     onToggleWatched = onWatched,
                                     onNotInterested = onNotInt,
-                                    onNotRecommendChannel = onNotRec,
-                                    modifier = Modifier.animateItem()
+                                    onNotRecommendChannel = onNotRec
                                 )
                             }
                         }

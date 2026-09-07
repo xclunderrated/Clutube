@@ -1460,7 +1460,7 @@ class YouTubeViewModel : ViewModel() {
 
     fun toggleAutoNextEpisode() {
         val enabled = !_uiState.value.isAutoNextEpisodeEnabled
-        settingsManager?.isAutoNextEpisodeEnabled = enabled
+        settingsManager?.isAutoNextEnabled = enabled
         _uiState.update { it.copy(isAutoNextEpisodeEnabled = enabled) }
     }
 

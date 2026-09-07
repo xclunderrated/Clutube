@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -184,23 +185,27 @@ fun FloatingVideoPlayer(
                                     targetX,
                                     position.value.y.coerceIn(topMarginPx, maxY)
                                 )
-                                position.animateTo(
-                                    target,
-                                    spring(
-                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                        stiffness = Spring.StiffnessMedium
+                                scope.launch {
+                                    position.animateTo(
+                                        target,
+                                        spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMedium
+                                        )
                                     )
-                                )
+                                }
                             },
                             onDragCancel = {
                                 val (maxX, maxY) = boundsFor(windowWidthPx, windowHeightPx)
-                                position.animateTo(
-                                    Offset(
-                                        position.value.x.coerceIn(edgeMarginPx, maxX),
-                                        position.value.y.coerceIn(topMarginPx, maxY)
-                                    ),
-                                    tween(200, easing = FastOutSlowInEasing)
-                                )
+                                scope.launch {
+                                    position.animateTo(
+                                        Offset(
+                                            position.value.x.coerceIn(edgeMarginPx, maxX),
+                                            position.value.y.coerceIn(topMarginPx, maxY)
+                                        ),
+                                        tween(200, easing = FastOutSlowInEasing)
+                                    )
+                                }
                             }
                         ) { change, dragAmount ->
                             change.consume()

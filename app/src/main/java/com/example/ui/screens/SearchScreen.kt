@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.animateItem
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -542,8 +541,7 @@ fun SearchScreen(
                         onNotInterested = onNotInt,
                         onNotRecommendChannel = onNotRec,
                         isReleaseAlertActive = releaseAlertId(video) in releaseAlertIds,
-                        onToggleReleaseAlert = onAlert,
-                        modifier = Modifier.animateItem()
+                        onToggleReleaseAlert = onAlert
                     )
                 }
             }
