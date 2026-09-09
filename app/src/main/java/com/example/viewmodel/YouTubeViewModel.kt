@@ -66,6 +66,12 @@ data class YouTubeUiState(
     val comments: List<CommentItem> = emptyList(),
     val currentPlayingVideo: VideoItem? = null,
     val relatedVideos: List<VideoItem> = emptyList(),
+    /** Playback key the current [relatedVideos] were fetched for. Guards MovieNext. */
+    val relatedVideosKey: String? = null,
+    /** Real YouTube trailer views for the playing title, e.g. "1.2M trailer views". Blank = unknown. */
+    val currentTrailerViewsLabel: String = "",
+    /** YouTube key the current trailer views belong to (guards races). */
+    val currentTrailerVideoId: String? = null,
     /** True while "More shows" is actively fetching (skeletons only then). */
     val isRelatedLoading: Boolean = false,
     /** Non-null when the related fetch failed and there is nothing to show. */
@@ -272,6 +278,13 @@ class YouTubeViewModel : ViewModel() {
     private var vidSrcFailoverMediaKey: String? = null
     private val vidSrcAttemptedServerHosts = linkedSetOf<String>()
     private var pendingNextEpisodeLookupKey: String? = null
+    private var pendingNextLookupStartedAtMs: Long = 0L
+    private var autoNextWatchdogJob: Job? = null
+    private var autoNextFiredKey: String? = null
+    private var toggleReconcileJob: Job? = null
+    private val prefetchedSeasonEpisodes = mutableMapOf<String, List<TmdbEpisodeItem>>()
+    private val trailerViewsJobs = mutableMapOf<String, Job>()
+    private var currentTrailerViewsJob: Job? = null
     private var skipSegmentsKey: String? = null
     private var skipSegmentsDurationMs: Long? = null
     private var skipSegmentsFetchJob: Job? = null
@@ -814,6 +827,81 @@ class YouTubeViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Visible-only trailer-views enrichment for the Home feed (main page).
+     * Same pattern as [ensureFeedStudios]: each visible card without views
+     * costs one cached TMDB videos lookup + one capped YouTube scrape, so
+     * cap fan-out and never refetch known titles. Unknown stays blank.
+     */
+    fun ensureTrailerViews(visibleIds: List<String>) {
+        if (visibleIds.isEmpty() || _uiState.value.isOffline) return
+        val targets = visibleIds.asSequence()
+            .distinct()
+            .mapNotNull { id ->
+                _uiState.value.videos.find { it.id == id }
+                    ?: _uiState.value.relatedVideos.find { it.id == id }
+            }
+            .filter {
+                (it.mediaType == MediaType.MOVIE || it.mediaType == MediaType.TV_SHOW) &&
+                    it.views.isBlank() && it.tmdbId?.isNotBlank() == true
+            }
+            .distinctBy { it.playbackKey() }
+            .filter { trailerViewsJobs[it.playbackKey()]?.isActive != true }
+            .take(6)
+            .toList()
+        if (targets.isEmpty()) return
+        targets.forEach { video ->
+            val key = video.playbackKey()
+            trailerViewsJobs[key] = viewModelScope.launch {
+                try {
+                    val label = TmdbRepository.fetchTrailerViewsLabel(video)
+                    if (label.isBlank()) return@launch
+                    _uiState.update { state ->
+                        state.copy(
+                            videos = state.videos.map {
+                                if (it.playbackKey() == key && it.views.isBlank()) it.copy(views = label) else it
+                            },
+                            relatedVideos = state.relatedVideos.map {
+                                if (it.playbackKey() == key && it.views.isBlank()) it.copy(views = label) else it
+                            },
+                            watchHistory = state.watchHistory.map { entry ->
+                                if (entry.key == key && entry.video.views.isBlank()) {
+                                    entry.copy(video = entry.video.copy(views = label))
+                                } else entry
+                            }
+                        )
+                    }
+                } finally {
+                    trailerViewsJobs.remove(key)
+                }
+            }
+        }
+    }
+
+    /**
+     * Resolves + fetches the playing title's real YouTube trailer views for
+     * the Watch page under-title row. Guarded by playbackKey: a fast title
+     * change cancels the stale fetch instead of painting wrong counts.
+     */
+    private fun fetchCurrentTrailerViews(video: VideoItem) {
+        currentTrailerViewsJob?.cancel()
+        val key = video.playbackKey()
+        _uiState.update { it.copy(currentTrailerViewsLabel = "", currentTrailerVideoId = null) }
+        if (_uiState.value.isOffline) return
+        currentTrailerViewsJob = viewModelScope.launch {
+            val trailerKey = TmdbRepository.resolveTrailerKey(video) ?: return@launch
+            if (_uiState.value.currentPlayingVideo?.playbackKey() != key) return@launch
+            val count = TmdbRepository.fetchTrailerViewCount(trailerKey) ?: return@launch
+            if (_uiState.value.currentPlayingVideo?.playbackKey() != key) return@launch
+            val label = com.example.data.youtube.formatTrailerViewsLabel(count)
+            if (label.isBlank()) return@launch
+            _uiState.update { state ->
+                if (state.currentPlayingVideo?.playbackKey() != key) state
+                else state.copy(currentTrailerViewsLabel = label, currentTrailerVideoId = trailerKey)
+            }
+        }
+    }
+
     fun reloadCurrentCategory(scrollToTopOnSuccess: Boolean = true) {
         loadCategoryContent(_uiState.value.selectedCategory, scrollToTopOnSuccess)
     }
@@ -1047,6 +1135,56 @@ class YouTubeViewModel : ViewModel() {
             }
         }
         scheduleHistorySave()
+        armAutoNextWatchdog(snapshot.key, position, duration, snapshot.isPlaying)
+    }
+
+    /**
+     * Screen-off safety net: the JS `ended` event is throttled when
+     * backgrounded and may never cross the bridge. When playback sits in the
+     * last seconds, arm a one-shot that auto-advances even without `Ended`.
+     * Cancelled on pause / seek-back / episode change.
+     */
+    private fun armAutoNextWatchdog(key: String, positionSec: Long, durationSec: Long, isPlaying: Boolean) {
+        if (!isPlaying) {
+            autoNextWatchdogJob?.cancel()
+            autoNextWatchdogJob = null
+            return
+        }
+        if (durationSec < 60L || autoNextFiredKey == key) {
+            return
+        }
+        val remaining = durationSec - positionSec
+        if (remaining > 4L || remaining < 0L) {
+            return
+        }
+        if (autoNextWatchdogJob?.isActive == true) return
+        autoNextWatchdogJob?.cancel()
+        autoNextWatchdogJob = viewModelScope.launch {
+            delay(5_000L)
+            val latest = _uiState.value
+            val snap = latest.currentPlaybackSnapshot
+            if (latest.currentPlayingVideo?.playbackKey() != key) return@launch
+            if (snap?.key != key || snap.isPlaying != true) return@launch
+            val trusted = trustedDurationSecFor(key, snap).toLong()
+            if (trusted < 60L) return@launch
+            if (trusted - snap.normalizedPositionSeconds > 5L) return@launch
+            autoNextFiredKey = key
+            when (val target = resolveNextTarget()) {
+                is NextTarget.QueueNext -> {
+                    removeFromQueue(target.video.playbackKey())
+                    playVideo(target.video, expand = latest.isPlayerExpanded)
+                }
+                is NextTarget.EpisodeNext, is NextTarget.MovieNext -> {
+                    if (latest.isAutoNextEpisodeEnabled) playNextEpisode(fromAuto = true)
+                }
+                NextTarget.None -> Unit
+            }
+        }
+    }
+
+    private fun cancelAutoNextWatchdog() {
+        autoNextWatchdogJob?.cancel()
+        autoNextWatchdogJob = null
     }
 
     private fun handlePlaybackEnded(key: String, generation: Long) {
@@ -1055,6 +1193,11 @@ class YouTubeViewModel : ViewModel() {
         if (state.currentPlayingVideo?.playbackKey() != key) return
         lastEndedKey = key
         lastEndedGeneration = generation
+        // The watchdog covers the same transition when `Ended` is throttled
+        // screen-off: claim it here so both paths can never advance twice and
+        // skip an episode.
+        cancelAutoNextWatchdog()
+        autoNextFiredKey = key
 
         val entry = state.watchHistory.firstOrNull { it.key == key } ?: return
         val duration = state.currentPlaybackSnapshot?.normalizedDurationSeconds
@@ -1089,14 +1232,19 @@ class YouTubeViewModel : ViewModel() {
         }
         saveHistoryNow(updatedHistory)
 
-        val queuedVideo = _uiState.value.queue.firstOrNull()
-        if (queuedVideo != null) {
-            removeFromQueue(queuedVideo.playbackKey())
-            playVideo(queuedVideo, expand = _uiState.value.isPlayerExpanded)
-            return
-        }
-        if (_uiState.value.isAutoNextEpisodeEnabled) {
-            playNextEpisode()
+        // Queue always wins, even with auto-next off (matches previous
+        // behavior). Episode / movie auto-advance respects the toggle.
+        when (val target = resolveNextTarget()) {
+            is NextTarget.QueueNext -> {
+                removeFromQueue(target.video.playbackKey())
+                playVideo(target.video, expand = _uiState.value.isPlayerExpanded)
+            }
+            is NextTarget.EpisodeNext, is NextTarget.MovieNext -> {
+                if (_uiState.value.isAutoNextEpisodeEnabled) {
+                    playNextEpisode(fromAuto = true)
+                }
+            }
+            NextTarget.None -> Unit
         }
     }
 
@@ -1159,6 +1307,9 @@ class YouTubeViewModel : ViewModel() {
         vidSrcFailoverMediaKey = null
         vidSrcAttemptedServerHosts.clear()
         pendingNextEpisodeLookupKey = null
+        pendingNextLookupStartedAtMs = 0L
+        autoNextWatchdogJob?.cancel()
+        autoNextWatchdogJob = null
     }
 
     private fun setStreamServerInternal(serverId: String, remember: Boolean) {
@@ -1292,6 +1443,18 @@ class YouTubeViewModel : ViewModel() {
         val updatedHistory = upsertHistory(current.watchHistory, resumedEntry)
         lastLoadAtMillis = System.currentTimeMillis()
         clearSkipDismissals()
+        cancelAutoNextWatchdog()
+        autoNextFiredKey = null
+        toggleReconcileJob?.cancel()
+        toggleReconcileJob = null
+        com.example.util.FullscreenHelper.clearUpNextTarget()
+        // New title (not an in-show episode step): drop the previous show's
+        // prefetched seasons so resolveNext/nowPlayingDisplay can never match
+        // a stale season. The new show's fetch repopulates below.
+        if (current.currentPlayingVideo?.tmdbId != readyVideo.tmdbId) {
+            prefetchedSeasonEpisodes.clear()
+        }
+        ensureWebViewLoaded(readyVideo, resumeOverrideSeconds, true)
 
         _uiState.update { current ->
             current.copy(
@@ -1378,6 +1541,9 @@ class YouTubeViewModel : ViewModel() {
 
         // Fetch Recommendations for "Up next"
         refreshRelatedVideos(readyVideo, key)
+
+        // Real YouTube trailer views for the Watch under-title row.
+        fetchCurrentTrailerViews(readyVideo)
     }
 
     /**
@@ -1408,6 +1574,7 @@ class YouTubeViewModel : ViewModel() {
                     val fallback = current.videos.filterNot { it.id == video.id }
                     current.copy(
                         relatedVideos = fallback.ifEmpty { current.relatedVideos },
+                        relatedVideosKey = key.takeIf { fallback.isNotEmpty() } ?: current.relatedVideosKey,
                         isRelatedLoading = false,
                         relatedErrorMessage = if (fallback.isNotEmpty() || current.relatedVideos.isNotEmpty()) {
                             null
@@ -1443,7 +1610,7 @@ class YouTubeViewModel : ViewModel() {
                         if (current.currentPlayingVideo?.playbackKey() != key) {
                             current
                         } else if (recs.isNotEmpty()) {
-                            current.copy(relatedVideos = recs, isRelatedLoading = false, relatedErrorMessage = null)
+                            current.copy(relatedVideos = recs, relatedVideosKey = key, isRelatedLoading = false, relatedErrorMessage = null)
                         } else if (current.relatedVideos.isEmpty()) {
                             current.copy(isRelatedLoading = false, relatedErrorMessage = "No related titles found.")
                         } else {
@@ -1485,15 +1652,23 @@ class YouTubeViewModel : ViewModel() {
     }
 
     fun selectTvEpisode(season: Int, episode: Int) {
-        resetAutomaticFailover()
-        val current = _uiState.value
-        val currentVideo = current.currentPlayingVideo ?: return
+        val pre = _uiState.value
+        if (pre.currentPlayingVideo == null) return
         val safeSeason = season.coerceAtLeast(1)
         val safeEpisode = episode.coerceAtLeast(1)
-        val requestedEpisode = current.tvEpisodes.firstOrNull {
+        // Validate before touching watchdog/UpNext state: tapping an
+        // unreleased episode must be a pure no-op.
+        pre.tvEpisodes.firstOrNull {
             it.seasonNumber == safeSeason && it.episodeNumber == safeEpisode
-        }
-        if (requestedEpisode != null && isUnreleased(requestedEpisode.airDate)) return
+        }?.let { if (isUnreleased(it.airDate)) return }
+        resetAutomaticFailover()
+        cancelAutoNextWatchdog()
+        autoNextFiredKey = null
+        toggleReconcileJob?.cancel()
+        toggleReconcileJob = null
+        com.example.util.FullscreenHelper.clearUpNextTarget()
+        val current = _uiState.value
+        val currentVideo = current.currentPlayingVideo ?: return
         val updatedVideo = currentVideo.copy(
             currentSeason = safeSeason,
             currentEpisode = safeEpisode
@@ -1542,9 +1717,37 @@ class YouTubeViewModel : ViewModel() {
         }
         saveHistoryNow(updatedHistory)
         requestSkipSegments(updatedVideo)
+        // Watch under-title trailer views: same show trailer across episodes.
+        fetchCurrentTrailerViews(updatedVideo)
+        // Backgrounded episode changes (shade Next, BT, auto-next) may not
+        // recompose the AndroidView host, so drive the WebView directly when
+        // it still points at the previous episode.
+        ensureWebViewLoaded(updatedVideo, if (isResume) previousEntry.resumePositionSeconds() else 0.0, true)
 
         if (current.selectedSeason != safeSeason) {
             fetchTvSeasonEpisodes(currentVideo.tmdbId?.toIntOrNull() ?: return, safeSeason)
+        }
+    }
+
+    /**
+     * Drives the persistent WebView directly for background transitions.
+     * Foreground Compose calls attachToContainer with the same params, so
+     * this is a no-op when already on the right media (loadMedia dedupes).
+     */
+    private fun ensureWebViewLoaded(video: VideoItem, resumeSecs: Double, playWhenReady: Boolean) {
+        val ctx = playbackContext ?: return
+        try {
+            if (com.example.util.PlayerViewManager.activeMediaKey != video.playbackKey()) {
+                com.example.util.PlayerViewManager.loadMedia(
+                    context = ctx,
+                    video = video,
+                    serverId = _uiState.value.selectedServerId,
+                    resumePositionSeconds = resumeSecs,
+                    playWhenReady = playWhenReady,
+                    vidSrcServerHost = _uiState.value.selectedVidSrcServerHost
+                )
+            }
+        } catch (_: Exception) {
         }
     }
 
@@ -2128,23 +2331,128 @@ class YouTubeViewModel : ViewModel() {
         return 0.0
     }
 
-    /** Mirrors [playNextEpisode]'s resolution order without navigating. */
-    private fun hasNextEpisode(): Boolean {
+    /** Trusted duration for the currently playing title, in milliseconds. */
+    fun currentTrustedDurationMs(): Long {
         val state = _uiState.value
-        val video = state.currentPlayingVideo ?: return false
-        if (video.mediaType != MediaType.TV_SHOW) return false
-        val totalSeasons = max(state.totalSeasons, video.totalSeasons)
-        val next = EpisodeNavigator.nextEpisode(
-            currentSeason = video.currentSeason,
-            currentEpisode = video.currentEpisode,
-            episodes = state.tvEpisodes.filterNot { isUnreleased(it.airDate) },
-            totalSeasons = totalSeasons
-        )
-        if (next != null) return true
-        if (video.totalEpisodes > video.currentEpisode) return true
-        if (video.currentSeason < totalSeasons) return true
-        return false
+        val video = state.currentPlayingVideo ?: return 0L
+        val secs = trustedDurationSecFor(video.playbackKey(), state.currentPlaybackSnapshot)
+        return if (secs.isFinite() && secs > 0.0) (secs * 1000L).toLong() else 0L
     }
+
+    /** Unified next-item resolution. Queue always wins, then episode, then movie. */
+    sealed interface NextTarget {
+        data class QueueNext(val video: VideoItem) : NextTarget
+        data class EpisodeNext(val season: Int, val episode: Int) : NextTarget
+        data class MovieNext(val video: VideoItem) : NextTarget
+        data object None : NextTarget
+    }
+
+    fun resolveNextTarget(): NextTarget {
+        val state = _uiState.value
+        val video = state.currentPlayingVideo ?: return state.queue.firstOrNull()?.let { NextTarget.QueueNext(it) }
+            ?: NextTarget.None
+        state.queue.firstOrNull()?.let { return NextTarget.QueueNext(it) }
+        if (video.mediaType == MediaType.TV_SHOW) {
+            val totalSeasons = max(state.totalSeasons, video.totalSeasons)
+            val episodes = state.tvEpisodes.filterNot { isUnreleased(it.airDate) }.ifEmpty {
+                prefetchedSeasonEpisodes["${video.tmdbId}:${video.currentSeason}"].orEmpty()
+                    .filterNot { isUnreleased(it.airDate) }
+            }
+            EpisodeNavigator.nextEpisode(
+                currentSeason = video.currentSeason,
+                currentEpisode = video.currentEpisode,
+                episodes = episodes,
+                totalSeasons = totalSeasons
+            )?.let { return NextTarget.EpisodeNext(it.season, it.episode) }
+            if (video.totalEpisodes > video.currentEpisode) {
+                return NextTarget.EpisodeNext(video.currentSeason, video.currentEpisode + 1)
+            }
+            if (video.currentSeason < totalSeasons) {
+                return NextTarget.EpisodeNext(video.currentSeason + 1, 1)
+            }
+            return NextTarget.None
+        }
+        // Movies: Up Next is the first related title (matches Watch UI).
+        // Scoped to the current title's fetch — never the previous shelf.
+        relatedForCurrent().firstOrNull { it.id != video.id }?.let {
+            return NextTarget.MovieNext(it)
+        }
+        return NextTarget.None
+    }
+
+    fun hasNextTarget(): Boolean = resolveNextTarget() != NextTarget.None
+
+    /**
+     * Related list scoped to the currently playing title. The UI keeps the
+     * last-good list visible across title changes, but Next must never jump
+     * into the previous title's shelf.
+     */
+    private fun relatedForCurrent(): List<VideoItem> {
+        val state = _uiState.value
+        val key = state.currentPlayingVideo?.playbackKey() ?: return emptyList()
+        if (state.relatedVideosKey != key) return emptyList()
+        return state.relatedVideos
+    }
+
+    /** Episode-aware shade / lock-screen display model. Recommended format. */
+    data class NowPlayingDisplay(
+        val title: String,
+        val subtitle: String,
+        val artworkUrl: String?
+    )
+
+    fun nowPlayingDisplay(): NowPlayingDisplay? {
+        val state = _uiState.value
+        val video = state.currentPlayingVideo ?: run {
+            val t = state.offlinePlayingTitle ?: return null
+            return NowPlayingDisplay(
+                title = t,
+                subtitle = state.offlinePlayingArtist.orEmpty(),
+                artworkUrl = null
+            )
+        }
+        if (video.mediaType == MediaType.TV_SHOW) {
+            val season = video.currentSeason.coerceAtLeast(1)
+            val episode = video.currentEpisode.coerceAtLeast(1)
+            val epItem = state.tvEpisodes.firstOrNull {
+                it.seasonNumber == season && it.episodeNumber == episode
+            } ?: prefetchedSeasonEpisodes.values.flatten().firstOrNull {
+                it.seasonNumber == season && it.episodeNumber == episode
+            }
+            val epName = epItem?.name?.trim().orEmpty()
+            val title = if (epName.isNotBlank()) {
+                "${video.title} — S${season}:E${episode} $epName"
+            } else {
+                "${video.title} — S${season}:E${episode}"
+            }
+            val studio = video.channelName.trim().takeIf {
+                it.isNotBlank() && it != UNRESOLVED_STUDIO_NAME
+            }
+            val subtitle = listOfNotNull(studio, "S${season}:E${episode}").joinToString(" • ")
+            val still = epItem?.stillPath?.takeIf { it.isNotBlank() }
+                ?.let { "https://image.tmdb.org/t/p/w500$it" }
+            val artwork = still?.takeIf { it.isNotBlank() }
+                ?: video.episodeStillUrl?.takeIf { it.isNotBlank() }
+                ?: video.backdropUrl?.takeIf { it.isNotBlank() }
+                ?: video.posterUrl?.takeIf { it.isNotBlank() }
+                ?: video.thumbnailUrl.takeIf { it.isNotBlank() }
+            return NowPlayingDisplay(title = title, subtitle = subtitle, artworkUrl = artwork)
+        }
+        val studio = video.channelName.trim().takeIf {
+            it.isNotBlank() && it != UNRESOLVED_STUDIO_NAME
+        }
+        val artwork = video.backdropUrl?.takeIf { it.isNotBlank() }
+            ?: video.posterUrl?.takeIf { it.isNotBlank() }
+            ?: video.thumbnailUrl.takeIf { it.isNotBlank() }
+        return NowPlayingDisplay(
+            title = video.title,
+            subtitle = studio.orEmpty(),
+            artworkUrl = artwork
+        )
+    }
+
+    /** Mirrors [playNextEpisode]'s resolution order without navigating. */
+    private fun hasNextEpisode(): Boolean = hasNextTarget()
 
     /**
      * Button tap handler. Bounded segments seek past `endSec`; open-ended
@@ -2157,16 +2465,8 @@ class YouTubeViewModel : ViewModel() {
         val video = state.currentPlayingVideo ?: return
         if (!state.isSkipSegmentsEnabled) return
         cancelPendingSkipAutoSkip()
-        if (segment.isNextEpisodeStyle && video.mediaType == MediaType.TV_SHOW) {
-            val totalSeasons = max(state.totalSeasons, video.totalSeasons)
-            val hasNext = EpisodeNavigator.nextEpisode(
-                currentSeason = video.currentSeason,
-                currentEpisode = video.currentEpisode,
-                episodes = state.tvEpisodes.filterNot { isUnreleased(it.airDate) },
-                totalSeasons = totalSeasons
-            ) != null || video.currentEpisode < video.totalEpisodes ||
-                video.currentSeason < totalSeasons
-            if (hasNext) {
+        if (segment.isNextEpisodeStyle) {
+            if (hasNextTarget()) {
                 playNextEpisode()
                 return
             }
@@ -2217,16 +2517,39 @@ class YouTubeViewModel : ViewModel() {
         }
     }
 
-    fun playNextEpisode() {
+    fun playNextEpisode(fromAuto: Boolean = false) {
+        // Queue always wins, even for manual taps while an episode lookup is
+        // in flight. Episode / movie targets ignore the auto-next toggle for
+        // manual taps; auto path already gated by callers.
+        _uiState.value.queue.firstOrNull()?.let { head ->
+            removeFromQueue(head.playbackKey())
+            playVideo(head, expand = _uiState.value.isPlayerExpanded)
+            return
+        }
         val current = _uiState.value
-        val currentVideo = current.currentPlayingVideo ?: return
-        if (currentVideo.mediaType != MediaType.TV_SHOW) return
+        val currentVideo = current.currentPlayingVideo ?: run {
+            if (!fromAuto) showFeedback("Nothing is playing")
+            return
+        }
+        if (currentVideo.mediaType != MediaType.TV_SHOW) {
+            // Movies: Up Next is the first related title, scoped to the
+            // current title's fetch.
+            relatedForCurrent().firstOrNull { it.id != currentVideo.id }?.let {
+                playVideo(it, expand = current.isPlayerExpanded)
+                return
+            }
+            if (!fromAuto) showFeedback("No next title")
+            return
+        }
 
         val totalSeasons = max(current.totalSeasons, currentVideo.totalSeasons)
         val next = EpisodeNavigator.nextEpisode(
             currentSeason = currentVideo.currentSeason,
             currentEpisode = currentVideo.currentEpisode,
-            episodes = current.tvEpisodes.filterNot { isUnreleased(it.airDate) },
+            episodes = current.tvEpisodes.filterNot { isUnreleased(it.airDate) }.ifEmpty {
+                prefetchedSeasonEpisodes["${currentVideo.tmdbId}:${currentVideo.currentSeason}"].orEmpty()
+                    .filterNot { isUnreleased(it.airDate) }
+            },
             totalSeasons = totalSeasons
         )
 
@@ -2249,14 +2572,29 @@ class YouTubeViewModel : ViewModel() {
                         NextEpisode(currentVideo.currentSeason + 1, 1)
                     else -> null
                 }
-                fallback?.let(::advanceToEpisode)
+                if (fallback != null) {
+                    advanceToEpisode(fallback)
+                } else if (!fromAuto) {
+                    showFeedback("This is the last episode")
+                }
+            } else if (!fromAuto) {
+                showFeedback("This is the last episode")
             }
             return
         }
 
         val currentKey = currentVideo.playbackKey()
-        if (pendingNextEpisodeLookupKey == currentKey) return
+        if (pendingNextEpisodeLookupKey == currentKey) {
+            if (!fromAuto && System.currentTimeMillis() - pendingNextLookupStartedAtMs > 6_000L) {
+                pendingNextEpisodeLookupKey = null
+            } else {
+                if (!fromAuto) showFeedback("Getting next episode…")
+                return
+            }
+        }
         pendingNextEpisodeLookupKey = currentKey
+        pendingNextLookupStartedAtMs = System.currentTimeMillis()
+        if (!fromAuto) showFeedback("Getting next episode…")
         viewModelScope.launch {
             try {
                 val episodes = TmdbRepository
@@ -2271,7 +2609,7 @@ class YouTubeViewModel : ViewModel() {
                         state.copy(tvEpisodes = episodes)
                     } else state
                 }
-                EpisodeNavigator.nextEpisode(
+                val resolved = EpisodeNavigator.nextEpisode(
                     currentSeason = currentVideo.currentSeason,
                     currentEpisode = currentVideo.currentEpisode,
                     episodes = episodes.filterNot { isUnreleased(it.airDate) },
@@ -2279,7 +2617,12 @@ class YouTubeViewModel : ViewModel() {
                         _uiState.value.totalSeasons,
                         _uiState.value.currentPlayingVideo?.totalSeasons ?: 1
                     )
-                )?.let(::advanceToEpisode)
+                )
+                if (resolved != null) {
+                    advanceToEpisode(resolved)
+                } else if (!fromAuto) {
+                    showFeedback("This is the last episode")
+                }
             } finally {
                 if (pendingNextEpisodeLookupKey == currentKey) {
                     pendingNextEpisodeLookupKey = null
@@ -2289,6 +2632,8 @@ class YouTubeViewModel : ViewModel() {
     }
 
     private fun advanceToEpisode(next: NextEpisode) {
+        cancelAutoNextWatchdog()
+        autoNextFiredKey = null
         markCurrentEntryCompleted()
         selectTvEpisode(next.season, next.episode)
     }
@@ -2298,6 +2643,8 @@ class YouTubeViewModel : ViewModel() {
             val seasonsCount = TmdbRepository.getTvTotalSeasons(tvId)
             val episodesResult = TmdbRepository.getTvEpisodes(tvId, season)
             episodesResult.onSuccess { episodes ->
+                val sorted = episodes.sortedBy { it.episodeNumber }
+                prefetchedSeasonEpisodes["$tvId:$season"] = sorted
                 _uiState.update { current ->
                     val activeVideo = current.currentPlayingVideo
                     if (activeVideo?.tmdbId?.toIntOrNull() != tvId || current.selectedSeason != season) {
@@ -2313,8 +2660,25 @@ class YouTubeViewModel : ViewModel() {
                             )
                         } ?: current
                         withSeasons.copy(
-                            tvEpisodes = episodes.sortedBy { it.episodeNumber }
+                            tvEpisodes = sorted
                         )
+                    }
+                }
+                // Prefetch the next season when on its last episode so shade
+                // Next never waits on network while backgrounded.
+                val total = seasonsCount?.takeIf { it > 0 } ?: _uiState.value.totalSeasons
+                val playing = _uiState.value.currentPlayingVideo
+                val isLastEp = playing?.tmdbId?.toIntOrNull() == tvId &&
+                    playing.currentSeason == season &&
+                    sorted.isNotEmpty() &&
+                    playing.currentEpisode >= (sorted.maxOfOrNull { it.episodeNumber } ?: playing.currentEpisode)
+                if (isLastEp && season < total) {
+                    viewModelScope.launch {
+                        runCatching {
+                            TmdbRepository.getTvEpisodes(tvId, season + 1).getOrNull()
+                                ?.sortedBy { it.episodeNumber }
+                                ?.let { prefetchedSeasonEpisodes["$tvId:${season + 1}"] = it }
+                        }
                     }
                 }
             }
@@ -2331,6 +2695,12 @@ class YouTubeViewModel : ViewModel() {
 
     fun closePlayer() {
         resetAutomaticFailover()
+        cancelAutoNextWatchdog()
+        autoNextFiredKey = null
+        toggleReconcileJob?.cancel()
+        toggleReconcileJob = null
+        currentTrailerViewsJob?.cancel()
+        currentTrailerViewsJob = null
         flushPlaybackProgress()
         skipSegmentsFetchJob?.cancel()
         skipSegmentsKey = null
@@ -2346,7 +2716,9 @@ class YouTubeViewModel : ViewModel() {
                 activeSkipSegment = null,
                 pendingFullscreenKey = null,
                 isRelatedLoading = false,
-                relatedErrorMessage = null
+                relatedErrorMessage = null,
+                currentTrailerViewsLabel = "",
+                currentTrailerVideoId = null
             )
         }
     }
@@ -2375,6 +2747,22 @@ class YouTubeViewModel : ViewModel() {
         val newPlaying = !_uiState.value.isPlaying
         com.example.util.PlayerViewManager.togglePlayPause(newPlaying)
         _uiState.update { it.copy(isPlaying = newPlaying) }
+        // Reconcile optimistic flip with WebView truth: the next snapshot
+        // overwrites isPlaying, but a dead/throttled page sends none. If no
+        // player exists at all, an optimistic "playing" can never be true.
+        toggleReconcileJob?.cancel()
+        toggleReconcileJob = viewModelScope.launch {
+            delay(2_500L)
+            com.example.util.PlayerViewManager.requestPlaybackSnapshot()
+            delay(2_000L)
+            if (newPlaying &&
+                com.example.util.PlayerViewManager.activeMediaKey == null &&
+                _uiState.value.currentPlayingVideo != null &&
+                _uiState.value.isPlaying
+            ) {
+                _uiState.update { it.copy(isPlaying = false) }
+            }
+        }
     }
 
     fun toggleMute() {

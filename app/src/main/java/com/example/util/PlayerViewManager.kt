@@ -69,20 +69,36 @@ object PlayerViewManager {
     private var miniPlayerMode = false
     private var audioFocusRequest: AudioFocusRequest? = null
     private var legacyAudioFocusHeld = false
+    private var pausedForAudioLoss: Boolean = false
     private val audioFocusChangeListener =
         AudioManager.OnAudioFocusChangeListener { focusChange ->
             if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
-                focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
-                focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
+                focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
             ) {
                 // Incoming call / other media: pause the embed. The next JS
                 // snapshot flips ViewModel.isPlaying so the notification
                 // follows without an extra callback path.
                 mainHandler.post {
+                    pausedForAudioLoss = lastKnownIsPlaying
                     lastKnownIsPlaying = false
                     updateBackgroundWakeLock()
                     setUserPausedFlag(true)
                     dispatchVideoCommand("pause")
+                }
+            } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
+                // Let the system duck; pausing here would kill background
+                // audio for every navigation prompt.
+            } else if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
+                mainHandler.post {
+                    if (pausedForAudioLoss && backgroundPlayEnabled) {
+                        pausedForAudioLoss = false
+                        lastKnownIsPlaying = true
+                        updateBackgroundWakeLock()
+                        setUserPausedFlag(false)
+                        dispatchVideoCommand("play")
+                    } else {
+                        pausedForAudioLoss = false
+                    }
                 }
             }
         }
@@ -761,6 +777,7 @@ object PlayerViewManager {
     )
 
     fun play() {
+        pausedForAudioLoss = false
         lastKnownIsPlaying = true
         updateBackgroundWakeLock()
         setUserPausedFlag(false)
@@ -768,6 +785,7 @@ object PlayerViewManager {
     }
 
     fun pause() {
+        pausedForAudioLoss = false
         lastKnownIsPlaying = false
         updateBackgroundWakeLock()
         // The page's screen-off guard must not undo an explicit pause
@@ -778,6 +796,7 @@ object PlayerViewManager {
     }
 
     fun togglePlayPause(isPlaying: Boolean) {
+        pausedForAudioLoss = false
         lastKnownIsPlaying = isPlaying
         updateBackgroundWakeLock()
         setUserPausedFlag(!isPlaying)

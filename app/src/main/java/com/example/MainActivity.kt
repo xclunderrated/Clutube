@@ -132,13 +132,19 @@ class MainActivity : ComponentActivity() {
                         viewModel.togglePlayPause()
                         // The STARTED collector below is inactive while the app is
                         // backgrounded, so refresh the notification explicitly.
-                        syncPlaybackService()
+                        syncPlaybackService(force = true)
+                    } else if (viewModel.uiState.value.offlinePlayingTitle != null) {
+                        // Offline player owns its ExoPlayer and handles TOGGLE
+                        // via its own receiver; just repost our copy of state.
+                        syncPlaybackService(force = true)
                     }
                 }
                 com.example.data.playback.PlaybackService.ACTION_NEXT -> {
-                    if (viewModel.uiState.value.currentPlayingVideo != null) {
+                    if (viewModel.uiState.value.currentPlayingVideo != null ||
+                        viewModel.uiState.value.queue.isNotEmpty()
+                    ) {
                         viewModel.playNextEpisode()
-                        syncPlaybackService()
+                        syncPlaybackService(force = true)
                     }
                 }
                 android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY -> {
@@ -147,7 +153,7 @@ class MainActivity : ComponentActivity() {
                         viewModel.uiState.value.currentPlayingVideo != null
                     ) {
                         viewModel.togglePlayPause()
-                        syncPlaybackService()
+                        syncPlaybackService(force = true)
                     }
                 }
             }
@@ -222,7 +228,11 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
-                    updatePipParams(state.currentPlayingVideo, state.isPlaying)
+                    updatePipParams(
+                        state.currentPlayingVideo,
+                        state.isPlaying,
+                        hasNext = viewModel.hasNextTarget()
+                    )
                 }
             }
         }
@@ -309,14 +319,17 @@ class MainActivity : ComponentActivity() {
         try {
             unregisterReceiver(downloadServiceReceiver)
         } catch (_: Exception) {}
-        // The WebView host dies with the activity, so audio is gone too —
-        // take the notification down with it.
-        try {
-            startService(
-                Intent(this, com.example.data.playback.PlaybackService::class.java)
-                    .setAction(com.example.data.playback.PlaybackService.ACTION_STOP)
-            )
-        } catch (_: Exception) {}
+        // Only take the notification down when the activity is really going
+        // away. Rotation / PiP transitions recreate the activity without
+        // killing the WebView host, so STOP there would cut background audio.
+        if (isFinishing) {
+            try {
+                startService(
+                    Intent(this, com.example.data.playback.PlaybackService::class.java)
+                        .setAction(com.example.data.playback.PlaybackService.ACTION_STOP)
+                )
+            } catch (_: Exception) {}
+        }
         mediaSession?.run {
             isActive = false
             release()
@@ -332,7 +345,7 @@ class MainActivity : ComponentActivity() {
         viewModel.flushPlaybackProgress()
         // Persist the paused state to the notification immediately; the
         // unconditional collector above may not emit again before stop.
-        syncPlaybackService()
+        syncPlaybackService(force = true)
         super.onStop()
     }
 
@@ -346,7 +359,7 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
 
-    private fun createPipActions(isPlaying: Boolean, isTvShow: Boolean): List<RemoteAction> {
+    private fun createPipActions(isPlaying: Boolean, hasNext: Boolean): List<RemoteAction> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return emptyList()
 
         val actions = mutableListOf<RemoteAction>()
@@ -366,10 +379,11 @@ class MainActivity : ComponentActivity() {
         )
         actions.add(RemoteAction(playPauseIcon, playPauseTitle, playPauseTitle, playPauseIntent))
 
-        // Next Episode Action for Series
-        if (isTvShow) {
+        // Next action follows the unified Next target (queue / episode /
+        // movie), not TV-only.
+        if (hasNext) {
             val nextIcon = Icon.createWithResource(this, android.R.drawable.ic_media_next)
-            val nextTitle = "Next Episode"
+            val nextTitle = "Next"
             val nextIntent = PendingIntent.getBroadcast(
                 this,
                 102,
@@ -500,15 +514,35 @@ class MainActivity : ComponentActivity() {
         mediaSession = MediaSession(this, "CluTubePlayback").apply {
             setCallback(object : MediaSession.Callback() {
                 override fun onPlay() {
-                    if (!viewModel.uiState.value.isPlaying) viewModel.togglePlayPause()
+                    if (!viewModel.uiState.value.isPlaying) {
+                        viewModel.togglePlayPause()
+                        syncPlaybackService(force = true)
+                    }
                 }
 
                 override fun onPause() {
-                    if (viewModel.uiState.value.isPlaying) viewModel.togglePlayPause()
+                    if (viewModel.uiState.value.isPlaying) {
+                        viewModel.togglePlayPause()
+                        syncPlaybackService(force = true)
+                    }
                 }
 
                 override fun onSkipToNext() {
                     viewModel.playNextEpisode()
+                    syncPlaybackService(force = true)
+                }
+
+                override fun onSeekTo(pos: Long) {
+                    val targetSec = (pos / 1000L).coerceAtLeast(0L).toDouble()
+                    com.example.util.PlayerViewManager.seekTo(targetSec)
+                    syncPlaybackService(force = true)
+                }
+
+                override fun onStop() {
+                    if (viewModel.uiState.value.isPlaying) {
+                        viewModel.togglePlayPause()
+                    }
+                    syncPlaybackService(force = true)
                 }
             })
             setFlags(
@@ -518,6 +552,10 @@ class MainActivity : ComponentActivity() {
             isActive = true
         }
     }
+
+    private var lastSessionArtworkUrl: String? = null
+    private var lastSessionArtworkBitmap: android.graphics.Bitmap? = null
+    private var sessionArtSeq: Long = 0L
 
     private fun updateMediaSession(
         video: VideoItem?,
@@ -534,27 +572,92 @@ class MainActivity : ComponentActivity() {
             session.setMetadata(null)
             return
         }
-        val position = snapshot?.normalizedPositionSeconds?.coerceAtLeast(0L) ?: 0L
-        val actions = PlaybackState.ACTION_PLAY or
+        val state = viewModel.uiState.value
+        val display = viewModel.nowPlayingDisplay()
+        val title = display?.title?.takeIf { it.isNotBlank() } ?: video.title.ifBlank { "CluTube" }
+        val artist = display?.subtitle?.takeIf { it.isNotBlank() } ?: video.channelName
+        // PlaybackState expects milliseconds; snapshots are seconds. The old
+        // code passed seconds straight through, so 5:00 showed as 0:00.
+        val positionMs = snapshot?.positionSeconds
+            ?.takeIf { it.isFinite() && it >= 0.0 }
+            ?.let { (it * 1000L).toLong() } ?: 0L
+        val durationMs = viewModel.currentTrustedDurationMs()
+            .takeIf { it > 0L }
+            ?: snapshot?.durationSeconds
+                ?.takeIf { it.isFinite() && it > 0.0 }
+                ?.let { (it * 1000L).toLong() } ?: 0L
+        val hasNext = viewModel.hasNextTarget()
+        var actions = PlaybackState.ACTION_PLAY or
             PlaybackState.ACTION_PAUSE or
-            if (video.mediaType == MediaType.TV_SHOW) PlaybackState.ACTION_SKIP_TO_NEXT else 0L
+            PlaybackState.ACTION_STOP
+        if (hasNext) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT
+        if (durationMs > 0L) actions = actions or PlaybackState.ACTION_SEEK_TO
         session.setPlaybackState(
             PlaybackState.Builder()
                 .setActions(actions)
                 .setState(
                     if (isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
-                    position,
-                    1f
+                    positionMs.coerceAtLeast(0L),
+                    1f,
+                    android.os.SystemClock.elapsedRealtime()
                 )
                 .build()
         )
-        session.setMetadata(
-            MediaMetadata.Builder()
-                .putString(MediaMetadata.METADATA_KEY_TITLE, video.title)
-                .putString(MediaMetadata.METADATA_KEY_ARTIST, video.channelName)
-                .putString(MediaMetadata.METADATA_KEY_ALBUM, "CluTube")
-                .build()
-        )
+        val metadata = MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
+            .putString(MediaMetadata.METADATA_KEY_ALBUM, "CluTube")
+        if (durationMs > 0L) {
+            metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs)
+        }
+        lastSessionArtworkBitmap?.let { bitmap ->
+            // Only reuse the cached bitmap for the same artwork URL; episode
+            // changes must not keep showing the previous still.
+            if (display?.artworkUrl == lastSessionArtworkUrl) {
+                metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, bitmap)
+                metadata.putBitmap(MediaMetadata.METADATA_KEY_ART, bitmap)
+            }
+        }
+        session.setMetadata(metadata.build())
+        // Fetch artwork async; repost metadata once Coil resolves so the
+        // lock-screen / shade shows the show/movie still instead of blank.
+        // Stale guard: a newer emission invalidates in-flight fetches.
+        val artworkUrl = display?.artworkUrl?.takeIf { it.isNotBlank() }
+        if (!artworkUrl.isNullOrBlank() && artworkUrl != lastSessionArtworkUrl) {
+            lastSessionArtworkUrl = artworkUrl
+            val mySeq = ++sessionArtSeq
+            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val bitmap = loadSessionArtwork(artworkUrl)
+                if (bitmap != null && mySeq == sessionArtSeq) {
+                    lastSessionArtworkBitmap = bitmap
+                    // Repost on the main thread with fresh position/duration.
+                    launch(kotlinx.coroutines.Dispatchers.Main) {
+                        if (mySeq != sessionArtSeq) return@launch
+                        val cur = viewModel.uiState.value
+                        updateMediaSession(
+                            cur.currentPlayingVideo,
+                            cur.isPlaying,
+                            cur.currentPlaybackSnapshot
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun loadSessionArtwork(url: String): android.graphics.Bitmap? {
+        return kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+            runCatching {
+                val request = coil.request.ImageRequest.Builder(this@MainActivity)
+                    .data(url)
+                    .size(512, 512)
+                    .scale(coil.size.Scale.FILL)
+                    .allowHardware(false)
+                    .build()
+                val result = coil.Coil.imageLoader(this@MainActivity).execute(request)
+                ((result as? coil.request.SuccessResult)?.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            }.getOrNull()
+        }
     }
 
     /**
@@ -566,24 +669,29 @@ class MainActivity : ComponentActivity() {
      */
     private var lastPlaybackSyncKey: String? = null
 
-    private fun syncPlaybackService() {
+    private fun syncPlaybackService(force: Boolean = false) {
         val state = viewModel.uiState.value
         val video = state.currentPlayingVideo
         val offlineTitle = state.offlinePlayingTitle
-        // Snapshots tick ~0.66Hz; only re-post when the video, play state,
-        // title, or background-play toggle actually changed. Play flips must
-        // always flow through so the notification + wake lock follow even
-        // when the position barely moved.
+        val display = viewModel.nowPlayingDisplay()
+        val hasNext = viewModel.hasNextTarget()
+        // Service reposts only on content change (video, episode label,
+        // artwork, play state, next availability, background toggle). The
+        // MediaSession (updated on every emission by the same collector)
+        // owns per-second position/duration — reposting FGS for position
+        // caused shade flicker + Binder spam for no benefit.
         val syncKey = when {
             video != null -> {
-                video.playbackKey() + "|" + state.isPlaying + "|" + video.title + "|" + state.isBackgroundPlayEnabled
+                video.playbackKey() + "|" + state.isPlaying + "|" +
+                    (display?.title.orEmpty()) + "|" + (display?.artworkUrl.orEmpty()) +
+                    "|" + hasNext + "|" + state.isBackgroundPlayEnabled
             }
             offlineTitle != null -> {
                 "offline|" + offlineTitle + "|" + state.offlinePlayingIsPlaying + "|" + state.isBackgroundPlayEnabled
             }
             else -> "none"
         }
-        if (syncKey == lastPlaybackSyncKey) return
+        if (!force && syncKey == lastPlaybackSyncKey) return
         lastPlaybackSyncKey = syncKey
         val serviceIntent =
             Intent(this, com.example.data.playback.PlaybackService::class.java)
@@ -596,10 +704,12 @@ class MainActivity : ComponentActivity() {
             serviceIntent.action = com.example.data.playback.PlaybackService.ACTION_SYNC
             if (video != null) {
                 serviceIntent.putExtra(
-                    com.example.data.playback.PlaybackService.EXTRA_TITLE, video.title
+                    com.example.data.playback.PlaybackService.EXTRA_TITLE,
+                    display?.title?.takeIf { it.isNotBlank() } ?: video.title
                 )
                 serviceIntent.putExtra(
-                    com.example.data.playback.PlaybackService.EXTRA_ARTIST, video.channelName
+                    com.example.data.playback.PlaybackService.EXTRA_ARTIST,
+                    display?.subtitle?.takeIf { it.isNotBlank() } ?: video.channelName
                 )
                 serviceIntent.putExtra(
                     com.example.data.playback.PlaybackService.EXTRA_IS_PLAYING, state.isPlaying
@@ -608,6 +718,14 @@ class MainActivity : ComponentActivity() {
                     com.example.data.playback.PlaybackService.EXTRA_IS_TV_SHOW,
                     video.mediaType == MediaType.TV_SHOW
                 )
+                serviceIntent.putExtra(
+                    com.example.data.playback.PlaybackService.EXTRA_HAS_NEXT, hasNext
+                )
+                display?.artworkUrl?.takeIf { it.isNotBlank() }?.let {
+                    serviceIntent.putExtra(
+                        com.example.data.playback.PlaybackService.EXTRA_ARTWORK_URL, it
+                    )
+                }
             } else {
                 serviceIntent.putExtra(
                     com.example.data.playback.PlaybackService.EXTRA_TITLE, offlineTitle
@@ -623,6 +741,9 @@ class MainActivity : ComponentActivity() {
                 serviceIntent.putExtra(
                     com.example.data.playback.PlaybackService.EXTRA_IS_TV_SHOW, false
                 )
+                serviceIntent.putExtra(
+                    com.example.data.playback.PlaybackService.EXTRA_HAS_NEXT, false
+                )
             }
             serviceIntent.putExtra(
                 com.example.data.playback.PlaybackService.EXTRA_BACKGROUND_ENABLED,
@@ -634,7 +755,14 @@ class MainActivity : ComponentActivity() {
                 )
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
+                try {
+                    startForegroundService(serviceIntent)
+                } catch (e: android.app.ForegroundServiceStartNotAllowedException) {
+                    // Backgrounded past the FGS window (Android 12+): session
+                    // metadata above already updated the shade; skip the
+                    // service repost rather than crashing background audio.
+                    Log.w("MainActivity", "FGS start blocked, session-only: ${e.message}")
+                }
             } else {
                 startService(serviceIntent)
             }
@@ -644,11 +772,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun updatePipParams(video: VideoItem?, isPlaying: Boolean) {
+    private fun updatePipParams(video: VideoItem?, isPlaying: Boolean, hasNext: Boolean = false) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val shouldEnablePip = video != null && isPlaying
-            val isTvShow = video?.mediaType == MediaType.TV_SHOW
-            val actions = if (video != null) createPipActions(isPlaying, isTvShow) else emptyList()
+            // PiP Next follows the same unified target as shade/session
+            // (queue + movies included), not TV-only.
+            val actions = if (video != null) createPipActions(isPlaying, hasNext) else emptyList()
 
             val builder = PictureInPictureParams.Builder()
                 .setAspectRatio(Rational(16, 9))
@@ -671,8 +800,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val state = viewModel.uiState.value
             if (state.currentPlayingVideo != null && state.isPlaying) {
-                val isTvShow = state.currentPlayingVideo.mediaType == MediaType.TV_SHOW
-                val actions = createPipActions(state.isPlaying, isTvShow)
+                val actions = createPipActions(state.isPlaying, viewModel.hasNextTarget())
                 val params = PictureInPictureParams.Builder()
                     .setAspectRatio(Rational(16, 9))
                     .setActions(actions)
@@ -939,11 +1067,14 @@ fun YouTubeApp(
                                       }
                                       viewModel.toggleReleaseAlert(it)
                                   },
-                                  onOpenServerDialog = { viewModel.setShowServerDialog(true) },
+                                   onOpenServerDialog = { viewModel.setShowServerDialog(true) },
                                    savedVideoIds = uiState.savedVideoIds,
                                    progressFractions = progressFractions,
                                    continueLabels = continueLabels,
-                                   onVisibleIdsChanged = { viewModel.ensureFeedStudios(it) }
+                                   onVisibleIdsChanged = {
+                                       viewModel.ensureFeedStudios(it)
+                                       viewModel.ensureTrailerViews(it)
+                                   }
                              )
 
                             1 -> ShortsScreen(
@@ -1179,6 +1310,7 @@ fun YouTubeApp(
                     isRelatedLoading = uiState.isRelatedLoading,
                     relatedErrorMessage = uiState.relatedErrorMessage,
                     onRetryRelated = { viewModel.retryRelatedVideos() },
+                    trailerViewsLabel = uiState.currentTrailerViewsLabel,
                     tvEpisodes = uiState.tvEpisodes,
                     totalSeasons = uiState.totalSeasons,
                     selectedSeason = uiState.selectedSeason,

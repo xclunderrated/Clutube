@@ -97,6 +97,10 @@ data class ShortItem(
     val isLiked: Boolean = false,
     /** YouTube trailer key when this Short is a catalog trailer. */
     val trailerVideoId: String? = null,
+    /** Real YouTube view count for the trailer; null = unknown (blank). */
+    val trailerViewCount: Long? = null,
+    /** YouTube-style label, e.g. "1.2M trailer views"; blank = unknown. */
+    val trailerViewsLabel: String = "",
     /** The catalog title opened by the Shorts "Watch Now" action. */
     val mediaItem: VideoItem? = null
 )

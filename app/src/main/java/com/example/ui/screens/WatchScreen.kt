@@ -143,6 +143,8 @@ fun WatchScreen(
     onDownloadVideo: ((VideoItem) -> Unit)? = null,
     isMovieDownloaded: Boolean = false,
     movieDownloadProgress: Int? = null,
+    /** Real YouTube trailer views, e.g. "1.2M trailer views". Blank = unknown. */
+    trailerViewsLabel: String = "",
     isEpisodeDownloaded: (Int, Int) -> Boolean = { _, _ -> false },
     getEpisodeDownloadProgress: (Int, Int) -> Int? = { _, _ -> null },
     modifier: Modifier = Modifier
@@ -265,6 +267,7 @@ fun WatchScreen(
 
                         VideoWatchDetails(
                             video = video,
+                            trailerViewsLabel = trailerViewsLabel,
                             isLiked = isLiked,
                             isDisliked = isDisliked,
                             isSubscribed = isSubscribed,
@@ -503,6 +506,7 @@ fun WatchScreen(
                     item(key = "watch_details", contentType = "details") {
                         VideoWatchDetails(
                             video = video,
+                            trailerViewsLabel = trailerViewsLabel,
                             isLiked = isLiked,
                             isDisliked = isDisliked,
                             isSubscribed = isSubscribed,

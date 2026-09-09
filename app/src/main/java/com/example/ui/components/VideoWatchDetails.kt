@@ -102,6 +102,8 @@ fun VideoWatchDetails(
     onOpenQueue: () -> Unit = {},
     onOpenChannel: ((String) -> Unit)? = null,
     onPlayNextEpisode: (() -> Unit)? = null,
+    /** Real YouTube trailer views, e.g. "1.2M trailer views". Blank = unknown. */
+    trailerViewsLabel: String = "",
     isReleaseAlertActive: Boolean = false,
     onToggleReleaseAlert: () -> Unit = {},
     isDownloaded: Boolean = false,
@@ -171,6 +173,23 @@ fun VideoWatchDetails(
             ImdbRatingBadge(
                 rating = formattedRating,
                 modifier = Modifier.testTag("watch_rating")
+            )
+        }
+
+        // YouTube-style trailer views line under the title, e.g.
+        // "1.2M trailer views". Real YouTube counts only; blank when unknown
+        // (never a fake number), matching the card meta-line styling.
+        if (trailerViewsLabel.isNotBlank()) {
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+                text = trailerViewsLabel,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 17.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("watch_trailer_views")
             )
         }
 

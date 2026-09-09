@@ -40,16 +40,32 @@ internal object PlaybackScript {
                     return window.__cluBackgroundPlayEnabled !== false;
                 }
 
-                function maybeResumeAfterHide(video) {
+                function maybeResumeAfterHide(video, retries) {
                     if (!video) return;
                     if (!isBackgroundPlayOn()) return;
                     if (window.__cluUserPaused === true) return;
                     try {
+                        try { video.playsInline = true; } catch (_) {}
                         if (video.paused) {
                             var p = video.play();
                             if (p && typeof p.catch === 'function') p.catch(function() {});
                         }
                     } catch (_) {}
+                    // Screen-off throttles timers; a single 250ms retry often
+                    // never fires. Re-assert at 1s + 3s while still hidden.
+                    var left = (typeof retries === 'number') ? retries : 2;
+                    if (left > 0 && document.hidden) {
+                        var delayMs = left === 2 ? 1000 : 3000;
+                        setTimeout(function() { maybeResumeAfterHide(video, left - 1); }, delayMs);
+                    }
+                }
+
+                function resumeAllAfterHide() {
+                    if (!isBackgroundPlayOn()) return;
+                    if (window.__cluUserPaused === true) return;
+                    document.querySelectorAll('video').forEach(function(video) {
+                        maybeResumeAfterHide(video, 2);
+                    });
                 }
 
                 function getBridge() {
@@ -526,8 +542,9 @@ internal object PlaybackScript {
 
                 // Screen-off keep-alive: some providers pause on
                 // visibilitychange. When hidden with background play ON and no
-                // explicit user pause, re-assert play on every tick (throttled
-                // by the OS in background, but still fires often enough).
+                // explicit user pause, re-assert play with retries (250ms +
+                // 1s + 3s) since background timers are heavily throttled.
+                // Also cover pagehide/freeze which fire on some OEMs.
                 if (window.__cluVisibilityListener) {
                     document.removeEventListener('visibilitychange', window.__cluVisibilityListener);
                 }
@@ -536,10 +553,17 @@ internal object PlaybackScript {
                     if (!isBackgroundPlayOn()) return;
                     if (window.__cluUserPaused === true) return;
                     document.querySelectorAll('video').forEach(function(video) {
-                        setTimeout(function() { maybeResumeAfterHide(video); }, 250);
+                        setTimeout(function() { maybeResumeAfterHide(video, 2); }, 250);
                     });
                 };
                 document.addEventListener('visibilitychange', window.__cluVisibilityListener);
+                if (window.__cluHideListener) {
+                    window.removeEventListener('pagehide', window.__cluHideListener);
+                    document.removeEventListener('freeze', window.__cluHideListener);
+                }
+                window.__cluHideListener = function() { resumeAllAfterHide(); };
+                window.addEventListener('pagehide', window.__cluHideListener);
+                document.addEventListener('freeze', window.__cluHideListener);
 
                 if (window.__cluPlaybackInterval) clearInterval(window.__cluPlaybackInterval);
                 var readyReported = false;

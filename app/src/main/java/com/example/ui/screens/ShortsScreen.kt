@@ -298,6 +298,20 @@ fun ShortsScreen(
                         ImdbRatingBadge(rating = rating, compact = true)
                     }
                 }
+                // Real YouTube trailer views (YouTube Shorts-style meta line).
+                // Blank when unknown — never a fake number.
+                if (short.trailerViewsLabel.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = short.trailerViewsLabel,
+                        color = Color.White.copy(alpha = 0.78f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("short_trailer_views")
+                    )
+                }
             }
         }
 

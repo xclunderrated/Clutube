@@ -48,6 +48,12 @@ object TmdbRepository {
     private val logoCache = boundedCache<Int, String>(200)
     private val channelArtworkCache =
         boundedCache<String, YouTubeChannelArtworkExtractor.Artwork>(64)
+    /** TMDB title → official YouTube trailer key ("" = none known). */
+    private val trailerKeyCache = boundedCache<String, String>(256)
+    /** YouTube trailer key → real view count (>0 only; unknown never cached). */
+    private val trailerViewCountCache = boundedCache<String, Long>(256)
+    /** Cap concurrent YouTube scrapes so feeds never CAPTCHA themselves. */
+    private val trailerViewsSlots = Semaphore(permits = 2)
     private val mediaArtworkCache = boundedCache<String, MediaArtworkData>(500)
     data class MediaStudioData(
         val studioName: String,
@@ -859,6 +865,12 @@ object TmdbRepository {
         ).getOrElse {
             mapToVideoItem(item, forcedType = mediaType)
         }
+        // Real YouTube trailer views (best-effort, blank on any failure).
+        // Key is known here, so this is one capped scrape — no TMDB call.
+        val viewCount = fetchTrailerViewCount(trailer.key)
+        val viewsLabel = viewCount?.let {
+            com.example.data.youtube.formatTrailerViewsLabel(it)
+        }.orEmpty()
         return ShortItem(
             id = "trailer_${mediaType.name.lowercase(Locale.US)}_${item.id}",
             title = media.title,
@@ -870,7 +882,9 @@ object TmdbRepository {
             videoStreamUrl = "",
             thumbnailUrl = "https://i.ytimg.com/vi/${trailer.key}/hqdefault.jpg",
             mediaItem = media,
-            trailerVideoId = trailer.key
+            trailerVideoId = trailer.key,
+            trailerViewCount = viewCount,
+            trailerViewsLabel = viewsLabel
         )
     }
 
@@ -893,6 +907,55 @@ object TmdbRepository {
                 )
             )
             .firstOrNull()
+    }
+
+    /**
+     * Resolves the official YouTube trailer key for a catalog title (cached).
+     * Null = none known. One cheap TMDB videos call per title, memoized.
+     */
+    suspend fun resolveTrailerKey(video: VideoItem): String? = withContext(Dispatchers.IO) {
+        val tmdbId = video.tmdbId?.takeIf { it.isNotBlank() } ?: return@withContext null
+        val cacheKey = "${video.mediaType.name}:$tmdbId"
+        trailerKeyCache[cacheKey]?.let { return@withContext it.takeIf { s -> s.isNotBlank() } }
+        val key = runCatching {
+            val tmdbIdInt = tmdbId.toIntOrNull() ?: return@runCatching null
+            val results = if (video.mediaType == MediaType.TV_SHOW) {
+                api.getTvVideos(tmdbIdInt).results
+            } else {
+                api.getMovieVideos(tmdbIdInt).results
+            }
+            selectTrailerVideo(results)?.key?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+        if (!key.isNullOrBlank()) trailerKeyCache[cacheKey] = key
+        key
+    }
+
+    /**
+     * Real YouTube view count for a trailer key (>0) or null when unknown.
+     * Cached; unknown is never cached so a later retry can succeed.
+     */
+    suspend fun fetchTrailerViewCount(trailerVideoId: String): Long? = withContext(Dispatchers.IO) {
+        val key = trailerVideoId.trim()
+        if (key.isEmpty()) return@withContext null
+        trailerViewCountCache[key]?.let { return@withContext it }
+        val count = trailerViewsSlots.withPermit {
+            withTimeoutOrNull(15_000L) {
+                com.example.data.youtube.YouTubeStreamStatsExtractor.fetchViewCount(key)
+            }
+        } ?: return@withContext null
+        if (count > 0L) trailerViewCountCache[key] = count
+        count.takeIf { it > 0L }
+    }
+
+    /**
+     * YouTube-style label for a catalog title's trailer, e.g.
+     * "1.2M trailer views". "" when the trailer or its count is unknown —
+     * callers render blank (never a fake number).
+     */
+    suspend fun fetchTrailerViewsLabel(video: VideoItem): String = withContext(Dispatchers.IO) {
+        val key = resolveTrailerKey(video) ?: return@withContext ""
+        val count = fetchTrailerViewCount(key) ?: return@withContext ""
+        com.example.data.youtube.formatTrailerViewsLabel(count)
     }
 
     suspend fun getMoviesFeed(categoryFilter: String = "Popular", page: Int = 1): Result<List<VideoItem>> = withContext(Dispatchers.IO) {
