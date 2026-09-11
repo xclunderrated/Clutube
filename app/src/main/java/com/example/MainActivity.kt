@@ -1071,10 +1071,9 @@ fun YouTubeApp(
                                    savedVideoIds = uiState.savedVideoIds,
                                    progressFractions = progressFractions,
                                    continueLabels = continueLabels,
-                                   onVisibleIdsChanged = {
-                                       viewModel.ensureFeedStudios(it)
-                                       viewModel.ensureTrailerViews(it)
-                                   }
+                                    onVisibleIdsChanged = {
+                                        viewModel.ensureFeedStudios(it)
+                                    }
                              )
 
                             1 -> ShortsScreen(

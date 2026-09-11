@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.ui.theme.YTSuccess
 import com.example.ui.theme.YouTubeRed
 import kotlinx.coroutines.delay
 import java.io.File
@@ -496,7 +497,7 @@ fun OfflineVideoPlayer(
                     colors = ButtonDefaults.buttonColors(containerColor = YouTubeRed),
                     modifier = Modifier.testTag("offline_open_external_btn")
                 ) {
-                    Text("Open in external player", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Open in external player", color = Color.White, fontWeight = FontWeight.Medium)
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(onClick = onClose) {
@@ -547,7 +548,7 @@ fun OfflineVideoPlayer(
                         Text(
                             text = title,
                             fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             color = Color.White,
                             maxLines = 1
                         )
@@ -638,7 +639,7 @@ fun OfflineVideoPlayer(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF2E7D32))
+                            .background(YTSuccess)
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text(
@@ -845,7 +846,7 @@ fun OfflineVideoPlayer(
                                     Text(
                                         text = "${if (playbackSpeed % 1f == 0f) playbackSpeed.toInt().toString() else playbackSpeed.toString()}x",
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.Medium,
                                         color = Color.White.copy(alpha = 0.9f)
                                     )
                                 }
@@ -910,7 +911,7 @@ fun OfflineVideoPlayer(
         if (showTrackPicker) {
             AlertDialog(
                 onDismissRequest = { showTrackPicker = false },
-                title = { Text("Subtitles", fontWeight = FontWeight.Bold) },
+                title = { Text("Subtitles", fontWeight = FontWeight.Medium) },
                 text = {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         SubtitleTrackRow(
@@ -1007,7 +1008,7 @@ private fun SubtitleTrackRow(
         Text(
             text = label,
             fontSize = 14.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
             color = if (selected) YouTubeRed else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f)
         )
@@ -1015,7 +1016,7 @@ private fun SubtitleTrackRow(
             Text(
                 text = "✓",
                 fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Medium,
                 color = YouTubeRed
             )
         }

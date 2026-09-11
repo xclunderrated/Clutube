@@ -159,7 +159,7 @@ fun SettingsScreen(
                 Text(
                     text = "Settings",
                     fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
             }
@@ -285,7 +285,7 @@ fun SettingsScreen(
                         Text(
                             text = "${skipAutoSkipDelaySeconds}s",
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Normal,
                             color = if (delayEnabled) MaterialTheme.colorScheme.onBackground
                             else MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -606,7 +606,7 @@ private fun SettingsSectionHeader(title: String) {
     Text(
         text = title,
         fontSize = 13.sp,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 2.dp)
     )

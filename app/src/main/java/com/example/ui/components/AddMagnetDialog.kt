@@ -99,7 +99,6 @@ fun AddMagnetDialog(
                         text = "ADD MAGNET / TORRENT",
                         style = MaterialTheme.typography.titleSmall,
                         color = YouTubeRed,
-                        fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
                     )
 
@@ -186,7 +185,7 @@ fun AddMagnetDialog(
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Start Download", fontWeight = FontWeight.Bold)
+                    Text("Start Download", fontWeight = FontWeight.Medium)
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -196,7 +195,7 @@ fun AddMagnetDialog(
                     text = "VERIFIED TEST TORRENTS (LIVE SEEDS)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.SemiBold
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))

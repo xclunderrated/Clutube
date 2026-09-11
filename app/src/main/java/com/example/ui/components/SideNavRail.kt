@@ -179,7 +179,7 @@ fun SideNavRail(
                 Text(
                     text = "You",
                     fontSize = 10.sp,
-                    fontWeight = if (selectedTab == 4) FontWeight.Bold else FontWeight.Normal
+                    fontWeight = if (selectedTab == 4) FontWeight.Medium else FontWeight.Normal
                 )
             },
             colors = NavigationRailItemDefaults.colors(
@@ -233,7 +233,7 @@ private fun RailItem(
             Text(
                 text = label,
                 fontSize = 10.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
             )
         },
         colors = NavigationRailItemDefaults.colors(

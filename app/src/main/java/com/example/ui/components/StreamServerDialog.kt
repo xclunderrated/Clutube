@@ -96,7 +96,7 @@ fun StreamServerDialog(
                         "Choose server",
                         color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         "Select where you want to play",
@@ -247,7 +247,7 @@ fun StreamServerDialog(
                             "Save domain order",
                             color = MaterialTheme.colorScheme.primary,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable(

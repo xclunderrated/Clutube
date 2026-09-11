@@ -294,7 +294,7 @@ fun VideoCard(
                 Text(
                     text = displayTitle,
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.Normal,
+                    fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -306,12 +306,12 @@ fun VideoCard(
 
                 // Single-line YouTube metadata: Studio • Year (exactly once —
                 // publishedAt duplicates the year, so it is skipped then).
-                // The media-type tag sits right-aligned in quiet muted text.
+                // Trailer view counts are intentionally hidden on the Home
+                // feed (main page) — the media-type tag sits right-aligned.
                 val metaLine = remember(video, releaseYear, continueLabel) {
                     buildList {
                         add(video.channelName)
                         if (!releaseYear.isNullOrBlank()) add(releaseYear)
-                        if (!video.views.isBlank()) add(video.views)
                         val published = video.publishedAt.takeIf { it.isNotBlank() }
                         if (published != null && published != releaseYear) add(published)
                     }.joinToString(" • ")

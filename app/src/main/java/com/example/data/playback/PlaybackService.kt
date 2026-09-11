@@ -220,10 +220,9 @@ class PlaybackService : Service() {
 
     /**
      * Service is the single owner of the screen-off CPU hold while playing.
-     * PlayerViewManager keeps a best-effort duplicate for the foreground
-     * WebView; either lock alone keeps audio alive. Bounded to 10 min and
-     * re-asserted on every SYNC while playing so a dead service can never
-     * pin the CPU forever.
+     * Held indefinitely while playing (released on pause/stop/destroy) so
+     * long movies don't lose audio at an arbitrary timeout. The system
+     * releases the lock if the process dies, so no leak is possible.
      */
     private fun acquireWakeLock() {
         try {
@@ -237,7 +236,7 @@ class PlaybackService : Service() {
                 ).apply { setReferenceCounted(false) }
                 wakeLock = lock
             }
-            if (!lock.isHeld) lock.acquire(10L * 60L * 1000L)
+            if (!lock.isHeld) lock.acquire()
         } catch (_: Exception) {
         }
     }

@@ -107,7 +107,7 @@ fun CommentsBottomSheet(
                     Text(
                         text = "Comments",
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -364,7 +364,7 @@ private fun CommentRow(
                 Text(
                     text = "Reply unavailable locally",
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
                 )

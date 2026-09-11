@@ -95,7 +95,7 @@ fun ShortsShelf(
             Text(
                 text = "Shorts",
                 fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Medium,
                 letterSpacing = (-0.3).sp,
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.semantics { heading() }
@@ -112,7 +112,7 @@ fun ShortsShelf(
                 Text(
                     text = "HOT",
                     fontSize = 9.sp,
-                    fontWeight = FontWeight.Black,
+                    fontWeight = FontWeight.Bold,
                     color = YouTubeRed
                 )
             }

@@ -6,12 +6,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-// YouTube-calibrated Material 3 Typography
-// Tailored to YouTube's mobile interface density, font weights, line heights, and compact tracking.
+// YouTube-calibrated Material 3 Typography (Roboto / FontFamily.Default).
+// YouTube mobile never uses Bold above 15sp: headlines top out at
+// SemiBold, titles/meta at Medium/Normal. Bold is reserved for tiny
+// badges (<=10sp) and author names.
 val Typography = Typography(
     headlineLarge = TextStyle(
         fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 24.sp,
         lineHeight = 30.sp,
         letterSpacing = (-0.5).sp

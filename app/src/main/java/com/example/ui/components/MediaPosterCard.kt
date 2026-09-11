@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -47,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.MediaType
 import com.example.model.VideoItem
+import com.example.ui.theme.YTSuccess
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
 
@@ -167,7 +167,7 @@ fun MediaPosterCard(
                         Box(
                             modifier = Modifier
                                 .clip(CircleShape)
-                                .background(Color(0xFF2E7D32))
+                                .background(YTSuccess)
                                 .padding(6.dp)
                         ) {
                             Icon(
@@ -253,19 +253,7 @@ fun MediaPosterCard(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (ratingFormatted != null) {
-                            Icon(
-                                imageVector = Icons.Default.Star,
-                                contentDescription = null,
-                                tint = Color(0xFFFFC107),
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = ratingFormatted,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White
-                            )
+                            ImdbRatingBadge(rating = ratingFormatted, compact = true)
                         }
 
                         if (releaseYear != null) {

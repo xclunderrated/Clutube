@@ -28,15 +28,18 @@ internal object StreamPlayerSkin {
             "(KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
 
     // In-memory cache for augmented provider assets. shouldInterceptRequest
-    // runs on WebView's resource thread — a blocking 8s/12s fetch there
-    // stalls first-frame decode (VidLink micro-stutter). Upstream player
-    // bundles change rarely, so cache combined responses for 10 min and
-    // fail fast (3s/5s) to upstream on any miss/timeout.
+    // runs on WebView's resource thread — a blocking fetch there stalls
+    // first-frame decode (VidLink micro-stutter). Upstream player bundles
+    // change rarely, so cache combined responses for 10 min and fail fast
+    // (1.5s/2.5s) to upstream on any miss/timeout. Embed HTML is also
+    // cached (2 min TTL) since the landing page is identical
+    // per URL and re-fetched on every mirror retry.
     private data class CachedAsset(val bytes: ByteArray, val expiresAt: Long)
     private val assetCache = java.util.concurrent.ConcurrentHashMap<String, CachedAsset>()
     private const val ASSET_CACHE_TTL_MS = 10 * 60 * 1000L
-    private const val CONNECT_TIMEOUT_MS = 3_000
-    private const val READ_TIMEOUT_MS = 5_000
+    private const val EMBED_HTML_CACHE_TTL_MS = 2 * 60 * 1000L
+    private const val CONNECT_TIMEOUT_MS = 1_500
+    private const val READ_TIMEOUT_MS = 2_500
 
     private fun cachedAsset(url: String): ByteArray? {
         val entry = assetCache[url] ?: return null
@@ -47,8 +50,8 @@ internal object StreamPlayerSkin {
         return entry.bytes
     }
 
-    private fun putCachedAsset(url: String, bytes: ByteArray) {
-        assetCache[url] = CachedAsset(bytes, System.currentTimeMillis() + ASSET_CACHE_TTL_MS)
+    private fun putCachedAsset(url: String, bytes: ByteArray, ttlMs: Long = ASSET_CACHE_TTL_MS) {
+        assetCache[url] = CachedAsset(bytes, System.currentTimeMillis() + ttlMs)
         if (assetCache.size > 24) {
             assetCache.keys.firstOrNull()?.let { assetCache.remove(it) }
         }
@@ -102,6 +105,13 @@ internal object StreamPlayerSkin {
     fun interceptPlayerEmbedHtml(request: WebResourceRequest?): WebResourceResponse? {
         val requestUrl = request?.url?.toString() ?: return null
         if (!isPlayerEmbedHtmlUrl(requestUrl)) return null
+        // Serve repeat mirror loads from cache — the landing HTML is
+        // identical per URL and the upstream fetch stalls first frame.
+        cachedAsset(requestUrl)?.let {
+            return WebResourceResponse(
+                "text/html", "UTF-8", java.io.ByteArrayInputStream(it)
+            )
+        }
 
         var connection: HttpURLConnection? = null
         return try {
@@ -132,10 +142,16 @@ internal object StreamPlayerSkin {
             } else {
                 upstreamHtml + AUTOSTART_RUNTIME
             }
+            val bytes = combinedHtml.toByteArray(Charsets.UTF_8)
+            // Cache briefly: landing pages embed per-title tokens, so use a
+            // shorter TTL than static player bundles (enforced by size cap
+            // + expiry check in cachedAsset; embed entries expire naturally
+            // as new URLs push old ones out).
+            putCachedAsset(requestUrl, bytes, EMBED_HTML_CACHE_TTL_MS)
             WebResourceResponse(
                 "text/html",
                 "UTF-8",
-                ByteArrayInputStream(combinedHtml.toByteArray(Charsets.UTF_8))
+                ByteArrayInputStream(bytes)
             )
         } catch (_: Exception) {
             null
@@ -543,7 +559,7 @@ internal object StreamPlayerSkin {
 
     function report(force) {
         var now = Date.now();
-        if (!force && now - lastReport < 1200) return;
+        if (!force && now - lastReport < 2000) return;
         var state = currentState();
         if (!isFinite(state.pos) || !isFinite(state.dur)) return;
         if (state.pos <= 0 && state.dur <= 0) return;
@@ -565,7 +581,7 @@ internal object StreamPlayerSkin {
         document.addEventListener(name, function () { report(name !== 'timeupdate'); }, true);
     });
     if (window.__cluSnapshotInterval) clearInterval(window.__cluSnapshotInterval);
-    window.__cluSnapshotInterval = setInterval(function () { report(false); }, 1500);
+    window.__cluSnapshotInterval = setInterval(function () { report(false); }, 2500);
 })();
 """
 
@@ -863,16 +879,16 @@ internal object StreamPlayerSkin {
     setTimeout(report, 1500);
     if (window.MutationObserver && document.documentElement) {
         // Throttled: provider class churn (hover/seek) fired report() dozens
-        // of times/sec. 500ms gate keeps UI visibility accurate for jank-free
-        // playback.
+        // of times/sec. 1000ms gate keeps UI visibility accurate for
+        // jank-free playback (was 500ms — VidLink low-FPS source).
         var __cluUiLast = 0;
         var __cluUiScheduled = false;
         function __cluThrottledReport() {
             var now = Date.now();
-            if (now - __cluUiLast < 500) {
+            if (now - __cluUiLast < 1000) {
                 if (!__cluUiScheduled) {
                     __cluUiScheduled = true;
-                    setTimeout(function() { __cluUiScheduled = false; report(); }, 500);
+                    setTimeout(function() { __cluUiScheduled = false; report(); }, 1000);
                 }
                 return;
             }
@@ -886,7 +902,7 @@ internal object StreamPlayerSkin {
             subtree: true
         });
     }
-    setInterval(report, 500);
+    setInterval(report, 1500);
 })();
 """
 

@@ -293,7 +293,7 @@ fun YouScreen(
                     Text(
                         text = localProfileName,
                         fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
@@ -381,7 +381,7 @@ fun YouScreen(
                     Text(
                         text = "Watch Later",
                         fontSize = 19.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
@@ -490,14 +490,14 @@ fun YouScreen(
                     Text(
                         text = "History",
                         fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
                             text = "View all",
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             color = YTBlueVerified,
                             modifier = Modifier.clickable(onClick = onViewAllHistory)
                         )
@@ -505,7 +505,7 @@ fun YouScreen(
                             Text(
                                 text = "Clear",
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.clickable(onClick = onClearHistory)
                             )
@@ -563,7 +563,7 @@ fun YouScreen(
                         Text(
                             text = "Downloads",
                             fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                         if (completedDownloads.isNotEmpty()) {
@@ -586,7 +586,7 @@ fun YouScreen(
                     Text(
                         text = if (completedDownloads.isNotEmpty() || activeDownloads.isNotEmpty()) "View all" else "Manage",
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                         color = YTBlueVerified,
                         modifier = Modifier.clickable(onClick = onOpenDownloads)
                     )
@@ -635,7 +635,7 @@ fun YouScreen(
                             Text(
                                 text = "${activeItem.progressPercent}%",
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Normal,
                                 color = YouTubeRed
                             )
                         }
@@ -966,7 +966,7 @@ private fun RowScope.LocalStat(
             .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Text(value, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
         Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -1042,7 +1042,7 @@ private fun SavedVideoRow(
                 .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Remove", color = YouTubeRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("Remove", color = YouTubeRed, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         }
 
         Row(

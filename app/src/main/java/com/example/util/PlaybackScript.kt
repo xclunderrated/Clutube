@@ -43,19 +43,36 @@ internal object PlaybackScript {
                 function maybeResumeAfterHide(video, retries) {
                     if (!video) return;
                     if (!isBackgroundPlayOn()) return;
+                    // Only explicit user pauses block resume. Provider
+                    // hide-pauses never set this flag (see pause listener
+                    // below), so screen-off recovery is not wedged by a
+                    // stray pause event. Applies to both VidSrc and VidLink.
                     if (window.__cluUserPaused === true) return;
                     try {
                         try { video.playsInline = true; } catch (_) {}
+                        // Resume any suspended WebAudio so provider players
+                        // using AudioContext don't stay silent after hide.
+                        try {
+                            var AC = window.AudioContext || window.webkitAudioContext;
+                            if (AC && !window.__cluAudioCtx) {
+                                try { window.__cluAudioCtx = new AC(); } catch (_) {}
+                            }
+                            if (window.__cluAudioCtx && window.__cluAudioCtx.state === 'suspended') {
+                                window.__cluAudioCtx.resume();
+                            }
+                        } catch (_) {}
                         if (video.paused) {
+                            try { video.muted = false; } catch (_) {}
                             var p = video.play();
                             if (p && typeof p.catch === 'function') p.catch(function() {});
                         }
                     } catch (_) {}
                     // Screen-off throttles timers; a single 250ms retry often
-                    // never fires. Re-assert at 1s + 3s while still hidden.
-                    var left = (typeof retries === 'number') ? retries : 2;
+                    // never fires. Re-assert at 1s + 3s + 6s while hidden so
+                    // the Kotlin 8s wake-lock grace always covers recovery.
+                    var left = (typeof retries === 'number') ? retries : 3;
                     if (left > 0 && document.hidden) {
-                        var delayMs = left === 2 ? 1000 : 3000;
+                        var delayMs = left === 3 ? 1000 : (left === 2 ? 3000 : 6000);
                         setTimeout(function() { maybeResumeAfterHide(video, left - 1); }, delayMs);
                     }
                 }
@@ -64,9 +81,23 @@ internal object PlaybackScript {
                     if (!isBackgroundPlayOn()) return;
                     if (window.__cluUserPaused === true) return;
                     document.querySelectorAll('video').forEach(function(video) {
-                        maybeResumeAfterHide(video, 2);
+                        maybeResumeAfterHide(video, 3);
                     });
                 }
+
+                // System-hide hooks: provider pages (both servers) pause on
+                // visibility loss. Recover without waiting for the per-video
+                // pause event, which some iframe players swallow.
+                try {
+                    document.removeEventListener('visibilitychange', window.__cluVisHandler || function() {});
+                } catch (_) {}
+                try {
+                    window.__cluVisHandler = function() {
+                        if (document.hidden) resumeAllAfterHide();
+                    };
+                    document.addEventListener('visibilitychange', window.__cluVisHandler);
+                    window.addEventListener('pagehide', function() { resumeAllAfterHide(); });
+                } catch (_) {}
 
                 function getBridge() {
                     return window.AndroidPlayerBridge;
@@ -115,12 +146,12 @@ internal object PlaybackScript {
                     var bridge = getBridge();
                     if (!video || !bridge || typeof bridge.onPlaybackSnapshot !== 'function') return;
                     var now = Date.now();
-                    // Throttled to ~0.8Hz steady-state (was 750ms): each snapshot
+                    // Throttled to ~0.5Hz steady-state: each snapshot
                     // crosses the JS bridge -> Handler(Main) -> StateFlow ->
-                    // full Watch/Home recompose. 1200ms keeps UpNext (10s
+                    // full Watch/Home recompose. 2000ms keeps UpNext (10s
                     // window) and progress bars smooth while cutting
-                    // recomposition + Binder traffic ~40%.
-                    if (!force && video.__cluLastSnapshotAt && now - video.__cluLastSnapshotAt < 1200) return;
+                    // recomposition + Binder traffic vs 1200ms.
+                    if (!force && video.__cluLastSnapshotAt && now - video.__cluLastSnapshotAt < 2000) return;
                     video.__cluLastSnapshotAt = now;
                     var position = numberOrZero(video.currentTime);
                     var duration = numberOrZero(video.duration);
@@ -599,10 +630,12 @@ internal object PlaybackScript {
                     hadUsableVideo = usable;
                     reportReadyWhenUsable();
                     window.__cluReportPlayback();
-                    // Steady-state 1500ms (was 1000ms): matches the 1200ms
+                    // Steady-state 2500ms (was 1500ms): matches the 2000ms
                     // snapshot throttle above, cuts Compose recomposition
-                    // from ~1Hz to ~0.66Hz without harming resume/UpNext.
-                }, 1500);
+                    // to ~0.4Hz without harming resume/UpNext. VidLink's
+                    // low-FPS stutter came from this + snapshot bridge
+                    // firing every 1.5s during playback.
+                }, 2500);
             })();
         """.trimIndent()
     }

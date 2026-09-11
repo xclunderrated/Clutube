@@ -106,6 +106,13 @@ object PlayerViewManager {
     var backgroundPlayEnabled: Boolean = true
         private set
     private var backgroundWakeLock: android.os.PowerManager.WakeLock? = null
+    // Delayed-release for the CPU hold: a provider-initiated pause on
+    // screen-off fires dispatchSnapshot(false) before the JS resume guard
+    // (250ms/1s/3s/6s retries) can recover. Releasing immediately lets the CPU
+    // sleep and the retries never run. Hold 8s so resume wins; genuine
+    // pauses still release after the window. Applies to both VidSrc and
+    // VidLink (shared WebView path).
+    private var wakeReleaseJob: Job? = null
     private var lastKnownIsPlaying: Boolean = false
     private var playerUiHideRunnable: Runnable? = null
     private var lastPresentationModeKey: String? = null
@@ -237,14 +244,16 @@ object PlayerViewManager {
             lastKnownIsPlaying = isPlaying
             updateBackgroundWakeLock()
         }
-        // Coalesce duplicate 0.66Hz ticks: identical position/playing reports
-        // within 800ms never reach Compose (saves a full Watch+Home recompose).
+        // Coalesce duplicate ticks: identical position/playing reports
+        // within 1500ms never reach Compose (saves a full Watch+Home
+        // recompose). Threshold 1.5s of position drift keeps progress bars
+        // and UpNext (10s window) smooth while cutting Binder traffic.
         val now = System.currentTimeMillis()
         if (generation == loadGeneration &&
             lastSnapshotPlaying == isPlaying &&
             !lastSnapshotPosition.isNaN() &&
-            kotlin.math.abs(positionSeconds - lastSnapshotPosition) < 0.75 &&
-            now - lastSnapshotEmitMillis < 800
+            kotlin.math.abs(positionSeconds - lastSnapshotPosition) < 1.5 &&
+            now - lastSnapshotEmitMillis < 1500
         ) {
             FullscreenHelper.updateUpNextPlayback(positionSeconds, durationSeconds)
             return
@@ -434,10 +443,24 @@ object PlayerViewManager {
                     setSupportMultipleWindows(false)
                     cacheMode = WebSettings.LOAD_DEFAULT
                     mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    // Video playback: disable pre-raster of offscreen pages
+                    // (saves GPU during fullscreen video) and keep default
+                    // render priority bound to the app lifecycle.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        offscreenPreRaster = false
+                    }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) safeBrowsingEnabled = true
                     userAgentString =
                         "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 " +
                             "(KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+                }
+                // Bound renderer priority keeps the video compositor responsive
+                // without pinning high-priority GPU while backgrounded.
+                // setRendererPriorityPolicy needs API 26+ (minSdk 24).
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
+                    } catch (_: Exception) {}
                 }
 
                 addJavascriptInterface(AndroidPlayerBridge(), "AndroidPlayerBridge")
@@ -678,7 +701,10 @@ object PlayerViewManager {
             _isCleanOverlayLoading.value = false
         }
         loadWatchdogJob = mainScope.launch {
-            delay(if (serverId == StreamService.VIDLINK_SERVER_ID) 15000L else 18000L)
+            // Fail fast so server failover fires before the user gives up:
+            // VidLink 8s, VidSrc 10s (was 15s/18s). Provider HLS usually
+            // signals within 3-5s on a healthy mirror.
+            delay(if (serverId == StreamService.VIDLINK_SERVER_ID) 8000L else 10000L)
             if (generation == loadGeneration &&
                 activeServerId == serverId &&
                 !hasUsablePlaybackSignal
@@ -827,17 +853,38 @@ object PlayerViewManager {
     }
 
     /**
-     * Holds a short-lived PARTIAL_WAKE_LOCK only while an embed is actively
-     * playing with background play ON. Released on pause/ended/error/release
-     * so battery impact is bounded to real playback.
+     * Holds a PARTIAL_WAKE_LOCK while an embed is actively playing with
+     * background play ON. A provider-initiated pause (screen-off hidden
+     * pause) holds 8s before releasing so the JS resume guard can recover
+     * audio; explicit release paths (pause/ended/error/release) still clear
+     * immediately via [releaseBackgroundWakeLock].
      */
     private fun updateBackgroundWakeLock() {
         mainHandler.post {
             val shouldHold = backgroundPlayEnabled && lastKnownIsPlaying && activeMediaKey != null
             if (!shouldHold) {
-                backgroundWakeLock?.let { if (it.isHeld) runCatching { it.release() } }
+                // Explicitly disabled or no media: release now, cancel grace.
+                if (!backgroundPlayEnabled || activeMediaKey == null) {
+                    wakeReleaseJob?.cancel()
+                    wakeReleaseJob = null
+                    backgroundWakeLock?.let { if (it.isHeld) runCatching { it.release() } }
+                    return@post
+                }
+                // Grace already counting down: keep it, don't re-arm.
+                if (wakeReleaseJob?.isActive == true) return@post
+                // Transient pause (likely screen-off): delay release 8s.
+                wakeReleaseJob?.cancel()
+                wakeReleaseJob = mainScope.launch {
+                    delay(8000L)
+                    if (!lastKnownIsPlaying && backgroundWakeLock?.isHeld == true) {
+                        runCatching { backgroundWakeLock?.let { if (it.isHeld) it.release() } }
+                    }
+                    wakeReleaseJob = null
+                }
                 return@post
             }
+            wakeReleaseJob?.cancel()
+            wakeReleaseJob = null
             try {
                 val appContext = hostContext?.applicationContext
                     ?: persistentWebView?.context?.applicationContext
@@ -860,6 +907,8 @@ object PlayerViewManager {
 
     private fun releaseBackgroundWakeLock() {
         lastKnownIsPlaying = false
+        wakeReleaseJob?.cancel()
+        wakeReleaseJob = null
         try {
             backgroundWakeLock?.let { if (it.isHeld) it.release() }
         } catch (_: Exception) {

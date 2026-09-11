@@ -364,7 +364,7 @@ fun SearchScreen(
                             Text(
                                 text = "Recent searches",
                                 fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.weight(1f)
                             )
@@ -376,7 +376,7 @@ fun SearchScreen(
                                     .testTag("clear_search_history"),
                                 fontSize = 11.sp,
                                 color = YouTubeRed,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.Medium
                             )
                         }
                     }
@@ -432,7 +432,7 @@ fun SearchScreen(
                         Text(
                             text = "Popular searches",
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -661,7 +661,7 @@ private fun SearchFilterRow(
                     .testTag("clear_search_filters_row"),
                 color = YouTubeRed,
                 fontSize = 11.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Medium
             )
         }
     }
@@ -695,7 +695,7 @@ private fun SearchFilterMenu(
                 .heightIn(min = 28.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.Medium
         )
         DropdownMenu(
             expanded = expanded,

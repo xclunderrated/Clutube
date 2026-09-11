@@ -22,6 +22,24 @@ class ClutubeApp : Application(), ImageLoaderFactory {
         // Initialize the download manager early so interrupted downloads auto-resume
         // on cold start without requiring the user to open the app UI.
         com.example.data.download.DownloadManager.getInstance(this)
+        // Prewarm the shared player WebView + DNS so the first play tap has
+        // no init jank. Runs on a background thread; WebView creation itself
+        // posts to main inside PlayerViewManager.prewarm().
+        Thread({
+            try {
+                android.webkit.WebView.getCurrentWebViewPackage()
+            } catch (_: Exception) {}
+            try {
+                // DNS prefetch for both embed providers.
+                java.net.InetAddress.getByName("vidsrc2.ru")
+            } catch (_: Exception) {}
+            try {
+                java.net.InetAddress.getByName("vidlink.pro")
+            } catch (_: Exception) {}
+            try {
+                com.example.util.PlayerViewManager.prewarm(this)
+            } catch (_: Exception) {}
+        }, "player-prewarm").apply { isDaemon = true }.start()
     }
 
     override fun newImageLoader(): ImageLoader {

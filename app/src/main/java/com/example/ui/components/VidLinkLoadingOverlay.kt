@@ -80,7 +80,7 @@ fun VidLinkLoadingOverlay(
                             onClick = onRetry,
                             modifier = Modifier.padding(start = 4.dp)
                         ) {
-                            Text("Retry", color = YouTubeRed, fontWeight = FontWeight.Bold)
+                            Text("Retry", color = YouTubeRed, fontWeight = FontWeight.Medium)
                         }
                     }
                 }

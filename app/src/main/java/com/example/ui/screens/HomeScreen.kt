@@ -283,7 +283,7 @@ fun HomeScreen(
                             .padding(start = 10.dp, top = 4.dp, bottom = 4.dp)
                             .testTag("feed_retry"),
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                         color = YouTubeRed
                     )
                 }
@@ -745,7 +745,7 @@ private fun ContinueWatchingSection(
             Text(
                 text = "Continue Watching",
                 fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onBackground
             )
         }

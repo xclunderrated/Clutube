@@ -105,7 +105,9 @@ import com.example.data.subtitles.subtitleBadgeLabel
 import com.example.model.MediaType
 import com.example.ui.components.FittedMediaThumbnail
 import com.example.ui.components.OfflineVideoPlayer
+import com.example.ui.theme.YTAccentBlue
 import com.example.ui.theme.YouTubeRed
+import com.example.ui.theme.YTWarningAmber
 import com.example.util.ImagePreset
 import java.io.File
 import java.util.Locale
@@ -344,7 +346,7 @@ fun DownloadsScreen(
                 title = {
                     Text(
                         text = "Downloads",
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         fontSize = 20.sp
                     )
                 },
@@ -588,7 +590,7 @@ fun DownloadsScreen(
                             Text(
                                 text = "TV Shows (${completedTvShowsBySeries.size})",
                                 fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                         }
@@ -644,7 +646,7 @@ fun DownloadsScreen(
                                             Text(
                                                 text = seriesTitle,
                                                 fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.Medium,
                                                 color = MaterialTheme.colorScheme.onBackground,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
@@ -715,7 +717,7 @@ fun DownloadsScreen(
                                                                 Text(
                                                                     text = "Season $seasonNumber",
                                                                     fontSize = 12.sp,
-                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontWeight = FontWeight.Medium,
                                                                     color = YouTubeRed,
                                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                                                 )
@@ -791,7 +793,7 @@ fun DownloadsScreen(
                             Text(
                                 text = "Movies (${completedMovies.size})",
                                 fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                         }
@@ -911,7 +913,7 @@ private fun StorageHeroCard(
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                StorageLegendDot(color = Color(0xFF1E88E5))
+                StorageLegendDot(color = YTAccentBlue)
                 Text(
                     text = "Series ${formatBytes(seriesBytes)}",
                     fontSize = 11.sp,
@@ -982,7 +984,7 @@ private fun DownloadsTabRow(
                         Text(
                             text = label,
                             fontSize = 13.sp,
-                            fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Medium
+                            fontWeight = FontWeight.Medium
                         )
                         if (count > 0) {
                             Spacer(modifier = Modifier.width(6.dp))
@@ -1091,7 +1093,7 @@ private fun LibraryControls(
                             Text(
                                 text = "$label ($count)",
                                 fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                fontWeight = FontWeight.Medium
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
@@ -1178,7 +1180,7 @@ private fun DownloadingHeader(
             text = if (activeCount > 0) "Downloading ($activeCount) · Waiting ($waitingCount)"
             else "Waiting ($waitingCount)",
             fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onBackground
         )
         Row {
@@ -1193,7 +1195,7 @@ private fun QueueGroupLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         fontSize = 12.sp,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.Medium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = modifier
     )
@@ -1219,7 +1221,7 @@ private fun FailedHeader(
         Text(
             text = "$failedCount failed",
             fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Medium,
             color = YouTubeRed
         )
         Row {
@@ -1246,7 +1248,7 @@ private fun TabEmptyState(
         Text(
             text = title,
             fontSize = 17.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onBackground
         )
         Spacer(modifier = Modifier.height(8.dp))
@@ -1345,8 +1347,8 @@ private fun QueuedDownloadCard(
                     val statusColor = when {
                         isFailed -> YouTubeRed
                         isPaused -> MaterialTheme.colorScheme.onSurfaceVariant
-                        isDownloading -> Color(0xFF1E88E5)
-                        else -> Color(0xFFFFB300)
+                        isDownloading -> YTAccentBlue
+                        else -> YTWarningAmber
                     }
 
                     Text(
@@ -1478,7 +1480,7 @@ private fun DownloadedMovieCard(
                 Text(
                     text = download.title,
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -1511,14 +1513,14 @@ private fun DownloadedMovieCard(
 
                     if (download.isTorrent) {
                         Surface(
-                            color = Color(0xFF1E88E5).copy(alpha = 0.15f),
+                            color = YTAccentBlue.copy(alpha = 0.15f),
                             shape = RoundedCornerShape(4.dp)
                         ) {
                             Text(
                                 text = if (download.seeders > 0) "TORRENT ▲${download.seeders}" else "TORRENT",
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1E88E5),
+                                color = YTAccentBlue,
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                             )
                         }
@@ -1772,7 +1774,7 @@ private fun EmptyDownloadsView(
         Text(
             text = "No downloads yet",
             fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onBackground
         )
 
@@ -1798,7 +1800,7 @@ private fun EmptyDownloadsView(
         ) {
             Text(
                 text = "Find Something to Download",
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Medium,
                 fontSize = 15.sp,
                 color = Color.White
             )

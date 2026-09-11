@@ -62,6 +62,7 @@ import com.example.model.ShortItem
 import com.example.model.VideoItem
 import com.example.ui.components.ImdbRatingBadge
 import com.example.ui.theme.YTBlueVerified
+import com.example.ui.theme.YTTextOnScrim
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
 import com.example.util.rememberOptimizedImageRequest
@@ -278,7 +279,7 @@ fun ShortsScreen(
                     text = displayTitle,
                     color = Color.White,
                     fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -286,7 +287,7 @@ fun ShortsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = displayStudio,
-                        color = Color.White.copy(alpha = 0.78f),
+                        color = YTTextOnScrim,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
@@ -304,7 +305,7 @@ fun ShortsScreen(
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = short.trailerViewsLabel,
-                        color = Color.White.copy(alpha = 0.78f),
+                        color = YTTextOnScrim,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Normal,
                         maxLines = 1,
@@ -340,7 +341,7 @@ fun ShortsScreen(
                         modifier = Modifier.size(17.dp)
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Watch Now", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Watch Now", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }

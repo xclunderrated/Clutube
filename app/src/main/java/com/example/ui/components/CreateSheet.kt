@@ -67,7 +67,7 @@ fun CreateSheet(
                 Text(
                     text = "Create",
                     fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 IconButton(onClick = onDismiss) {

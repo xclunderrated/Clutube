@@ -65,10 +65,11 @@ import coil.request.ImageRequest
 import com.example.data.model.TorrentSource
 import com.example.model.MediaType
 import com.example.model.VideoItem
+import com.example.ui.theme.YTSuccess
 import com.example.ui.theme.YouTubeRed
 
 private val AmberWarning = Color(0xFFFFB300)
-private val MintEmerald = Color(0xFF00E676)
+private val MintEmerald = YTSuccess
 
 @Composable
 fun TorrentSourceDialog(
@@ -170,7 +171,7 @@ fun TorrentSourceDialog(
                                         Text(
                                             text = "%.1f".format(video.rating),
                                             fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
+                                            fontWeight = FontWeight.Normal,
                                             color = Color.White
                                         )
                                     }
@@ -180,7 +181,6 @@ fun TorrentSourceDialog(
                             Text(
                                 text = if (yearStr.isNotBlank()) "${video.title} ($yearStr)" else video.title,
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
                                 color = Color.White,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -213,7 +213,7 @@ fun TorrentSourceDialog(
                             text = "SELECT SEASON",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Normal
                         )
                         Row(
                             modifier = Modifier
@@ -254,7 +254,7 @@ fun TorrentSourceDialog(
                             text = "SELECT EPISODE",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Normal
                         )
                         Row(
                             modifier = Modifier
@@ -308,7 +308,7 @@ fun TorrentSourceDialog(
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = YouTubeRed,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         letterSpacing = 1.sp
                     )
 
@@ -467,7 +467,7 @@ fun TorrentSourceDialog(
                                 Text(
                                     text = "Season packs (${packs.size})",
                                     fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
@@ -479,7 +479,7 @@ fun TorrentSourceDialog(
                             Text(
                                 text = if (packsExpanded) "Hide" else "Show",
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                                 color = YouTubeRed,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
@@ -565,7 +565,7 @@ private fun TorrentSourceItemCard(
                     Text(
                         text = source.quality,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                         color = YouTubeRed,
                         modifier = Modifier
                             .background(YouTubeRed.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
@@ -669,7 +669,7 @@ private fun TorrentSourceItemCard(
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }

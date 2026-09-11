@@ -90,7 +90,7 @@ fun QueueSheet(
                         .weight(1f)
                         .padding(start = 10.dp),
                     fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.SemiBold
                 )
                 if (queue.isNotEmpty()) {
                     TextButton(onClick = onClear) {
@@ -108,7 +108,7 @@ fun QueueSheet(
                     text = "Playing",
                     modifier = Modifier.padding(top = 12.dp, bottom = 6.dp),
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = YouTubeRed
                 )
                 QueueVideoRow(video = currentVideo, isPlaying = true, onClick = {}, isClickable = false)
@@ -118,7 +118,7 @@ fun QueueSheet(
             Text(
                 text = "Up next",
                 fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp)
             )

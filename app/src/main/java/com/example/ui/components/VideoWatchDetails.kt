@@ -79,6 +79,7 @@ import com.example.model.MediaType
 import com.example.model.VideoItem
 import com.example.model.isUnreleased
 import com.example.ui.theme.YTBlueVerified
+import com.example.ui.theme.YTSuccess
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
 import com.example.util.rememberOptimizedImageRequest
@@ -166,10 +167,9 @@ fun VideoWatchDetails(
             )
         }
 
-        // Subtle star rating under the title (e.g. ★ 6.4/10). Plain row, no
-        // badge background, so it stays non-distracting.
+        // True IMDb pill under the title. Extra top padding for pill height.
         if (!formattedRating.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             ImdbRatingBadge(
                 rating = formattedRating,
                 modifier = Modifier.testTag("watch_rating")
@@ -222,7 +222,7 @@ fun VideoWatchDetails(
                         Text(
                             text = video.views,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Normal,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -231,7 +231,7 @@ fun VideoWatchDetails(
                         Text(
                             text = video.publishedAt,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Normal,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -282,7 +282,7 @@ fun VideoWatchDetails(
                         Text(
                             text = "...more info & cast",
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -318,7 +318,7 @@ fun VideoWatchDetails(
                         Text(
                             text = "Production & Details",
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                         Spacer(modifier = Modifier.height(6.dp))
@@ -390,7 +390,7 @@ fun VideoWatchDetails(
                                 Text(
                                     text = "Cast & Actors",
                                     fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                                 Text(
@@ -458,7 +458,7 @@ fun VideoWatchDetails(
                             Text(
                                 text = "Show less ▲",
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
@@ -506,7 +506,7 @@ fun VideoWatchDetails(
                         Text(
                             text = video.channelName,
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onBackground,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -710,7 +710,7 @@ fun VideoWatchDetails(
                     ActionPill(
                         label = downloadLabel,
                         icon = downloadIcon,
-                        iconTint = if (isDownloaded) Color(0xFF4CAF50) else null,
+                        iconTint = if (isDownloaded) YTSuccess else null,
                         onClick = onDownloadClick,
                         testTag = "action_download"
                     )
@@ -742,7 +742,7 @@ fun VideoWatchDetails(
                                 text = "Next EP",
                                 color = Color.White,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Medium
                             )
                         }
                     }
@@ -773,7 +773,7 @@ fun VideoWatchDetails(
                         Text(
                             text = "Comments",
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         if (video.commentsCount.isNotBlank()) {
@@ -840,7 +840,7 @@ private fun MetadataRow(label: String, value: String) {
         Text(
             text = "$label: ",
             fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Normal,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(110.dp)
         )
@@ -904,7 +904,7 @@ private fun ActorCard(castMember: CastMemberItem) {
         Text(
             text = castMember.name,
             fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,

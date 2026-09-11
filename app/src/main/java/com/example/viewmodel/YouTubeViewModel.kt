@@ -282,6 +282,11 @@ class YouTubeViewModel : ViewModel() {
     private var autoNextWatchdogJob: Job? = null
     private var autoNextFiredKey: String? = null
     private var toggleReconcileJob: Job? = null
+    // Grace window for transient provider pauses on screen-off: a single
+    // paused snapshot with background play ON does not flip isPlaying (and
+    // demote the foreground service) until the JS resume guard has had a
+    // chance to recover. Cancelled by any playing snapshot or new title.
+    private var backgroundPauseGraceJob: Job? = null
     private val prefetchedSeasonEpisodes = mutableMapOf<String, List<TmdbEpisodeItem>>()
     private val trailerViewsJobs = mutableMapOf<String, Job>()
     private var currentTrailerViewsJob: Job? = null
@@ -828,18 +833,21 @@ class YouTubeViewModel : ViewModel() {
     }
 
     /**
-     * Visible-only trailer-views enrichment for the Home feed (main page).
-     * Same pattern as [ensureFeedStudios]: each visible card without views
-     * costs one cached TMDB videos lookup + one capped YouTube scrape, so
-     * cap fan-out and never refetch known titles. Unknown stays blank.
+     * Visible-only trailer-views enrichment for Watch related cards.
+     * Home feed (main page) no longer shows trailer views, so the Home
+     * `videos` list is intentionally never enriched here — only
+     * `relatedVideos` (Watch related rail) is backfilled. Same pattern as
+     * [ensureFeedStudios]: each visible card without views costs one cached
+     * TMDB videos lookup + one capped YouTube scrape, so cap fan-out and
+     * never refetch known titles. Unknown stays blank. Watch under-title
+     * uses [fetchCurrentTrailerViews] separately and is unaffected.
      */
     fun ensureTrailerViews(visibleIds: List<String>) {
         if (visibleIds.isEmpty() || _uiState.value.isOffline) return
         val targets = visibleIds.asSequence()
             .distinct()
             .mapNotNull { id ->
-                _uiState.value.videos.find { it.id == id }
-                    ?: _uiState.value.relatedVideos.find { it.id == id }
+                _uiState.value.relatedVideos.find { it.id == id }
             }
             .filter {
                 (it.mediaType == MediaType.MOVIE || it.mediaType == MediaType.TV_SHOW) &&
@@ -858,9 +866,6 @@ class YouTubeViewModel : ViewModel() {
                     if (label.isBlank()) return@launch
                     _uiState.update { state ->
                         state.copy(
-                            videos = state.videos.map {
-                                if (it.playbackKey() == key && it.views.isBlank()) it.copy(views = label) else it
-                            },
                             relatedVideos = state.relatedVideos.map {
                                 if (it.playbackKey() == key && it.views.isBlank()) it.copy(views = label) else it
                             },
@@ -1093,7 +1098,21 @@ class YouTubeViewModel : ViewModel() {
             else current.copy(
                 watchHistory = updatedHistory,
                 watchedVideoIds = updatedWatched,
-                isPlaying = snapshot.isPlaying,
+                // Transient screen-off pause: provider pages pause on
+                // document.hidden before the JS resume guard recovers.
+                // With background play ON, keep isPlaying=true so the
+                // foreground service + wake lock survive; the grace job
+                // below flips to paused only if no playing tick returns.
+                // Explicit user pauses go through togglePlayPause (which
+                // already set isPlaying=false), so holding true here only
+                // affects provider-initiated pauses.
+                isPlaying = if (!snapshot.isPlaying && current.isPlaying &&
+                    current.isBackgroundPlayEnabled
+                ) {
+                    current.isPlaying
+                } else {
+                    snapshot.isPlaying
+                },
                 isMuted = snapshot.isMuted,
                 currentPlaybackSnapshot = snapshot,
                 // Tracking truth is now live; the one-shot resume override
@@ -1108,6 +1127,35 @@ class YouTubeViewModel : ViewModel() {
         // TheIntroDB v3 `duration_ms` phase B + button-visibility matching.
         // Uses the same trusted duration as history tracking so VidLink's
         // placeholder 0/short durations can never trigger a refetch.
+        // Background-pause grace: a provider-initiated pause with background
+        // ON arms a 6s window. A playing tick cancels it; expiry flips to
+        // paused (genuine pause/end). Applies to both VidSrc and VidLink
+        // since both report through this same snapshot path.
+        if (snapshot.isPlaying) {
+            backgroundPauseGraceJob?.cancel()
+            backgroundPauseGraceJob = null
+        } else if (_uiState.value.isPlaying && _uiState.value.isBackgroundPlayEnabled &&
+            _uiState.value.currentPlayingVideo?.playbackKey() == snapshot.key
+        ) {
+            backgroundPauseGraceJob?.cancel()
+            val graceKey = snapshot.key
+            backgroundPauseGraceJob = viewModelScope.launch {
+                kotlinx.coroutines.delay(6_000L)
+                val cur = _uiState.value
+                if (cur.currentPlayingVideo?.playbackKey() == graceKey && cur.isPlaying) {
+                    // Re-check the latest snapshot: if a playing tick landed
+                    // during the window, isPlaying is still true but the
+                    // snapshot is playing — don't force-pause.
+                    val latestSnap = cur.currentPlaybackSnapshot
+                    if (latestSnap?.key == graceKey && !latestSnap.isPlaying) {
+                        _uiState.update { it.copy(isPlaying = false) }
+                    }
+                }
+            }
+        } else if (!snapshot.isPlaying && !_uiState.value.isBackgroundPlayEnabled) {
+            backgroundPauseGraceJob?.cancel()
+            backgroundPauseGraceJob = null
+        }
         if (duration > 0L) {
             maybeRefreshSkipSegmentsWithDuration(currentVideo, duration)
         }
@@ -1447,6 +1495,8 @@ class YouTubeViewModel : ViewModel() {
         autoNextFiredKey = null
         toggleReconcileJob?.cancel()
         toggleReconcileJob = null
+        backgroundPauseGraceJob?.cancel()
+        backgroundPauseGraceJob = null
         com.example.util.FullscreenHelper.clearUpNextTarget()
         // New title (not an in-show episode step): drop the previous show's
         // prefetched seasons so resolveNext/nowPlayingDisplay can never match
@@ -1666,6 +1716,8 @@ class YouTubeViewModel : ViewModel() {
         autoNextFiredKey = null
         toggleReconcileJob?.cancel()
         toggleReconcileJob = null
+        backgroundPauseGraceJob?.cancel()
+        backgroundPauseGraceJob = null
         com.example.util.FullscreenHelper.clearUpNextTarget()
         val current = _uiState.value
         val currentVideo = current.currentPlayingVideo ?: return
@@ -2699,6 +2751,8 @@ class YouTubeViewModel : ViewModel() {
         autoNextFiredKey = null
         toggleReconcileJob?.cancel()
         toggleReconcileJob = null
+        backgroundPauseGraceJob?.cancel()
+        backgroundPauseGraceJob = null
         currentTrailerViewsJob?.cancel()
         currentTrailerViewsJob = null
         flushPlaybackProgress()

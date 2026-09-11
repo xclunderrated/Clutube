@@ -149,7 +149,7 @@ fun NotificationsScreen(
                 Text(
                     text = "Notifications",
                     fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
@@ -208,7 +208,7 @@ fun NotificationsScreen(
                     Text(
                         text = filter.label,
                         fontSize = 12.sp,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        fontWeight = FontWeight.Medium,
                         color = if (selected) MaterialTheme.colorScheme.background
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
@@ -315,7 +315,7 @@ fun NotificationsScreen(
                             Text(
                                 text = age.label,
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)
                             )
@@ -409,7 +409,7 @@ private fun NotificationHeroCard(
                     Text(
                         text = "NEW",
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
+                        fontWeight = FontWeight.Bold,
                         color = androidx.compose.ui.graphics.Color.White,
                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                     )
@@ -529,7 +529,7 @@ private fun NotificationHeroCard(
                 modifier = Modifier.size(20.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
-            Text(text = "Watch now", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text(text = "Watch now", fontWeight = FontWeight.Medium, fontSize = 13.sp)
         }
     }
 }
@@ -721,7 +721,7 @@ private fun UpcomingReleasesShelf(
                 Text(
                     text = "Coming soon",
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
@@ -779,7 +779,7 @@ private fun UpcomingReleasesShelf(
                             Text(
                                 text = if (video.mediaType == MediaType.TV_SHOW) "SERIES" else "MOVIE",
                                 fontSize = 9.sp,
-                                fontWeight = FontWeight.ExtraBold,
+                                fontWeight = FontWeight.Bold,
                                 color = androidx.compose.ui.graphics.Color.White,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )

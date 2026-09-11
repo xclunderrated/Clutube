@@ -15,6 +15,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.example.ui.theme.YTBrandNavy
+import com.example.ui.theme.YTLogoFallback
+import com.example.ui.theme.YTMarvelRed
 import com.example.util.ImagePreset
 import com.example.util.rememberOptimizedImageRequest
 
@@ -92,19 +95,19 @@ private fun studioBrandBackground(name: String?, logoUrl: String?): Color {
     // keeps those marks readable while preserving the branded treatment for
     // the current channel artwork.
     if (isTransparentCatalogLogo) {
-        return Color(0xFFF1F1F1)
+        return YTLogoFallback
     }
 
     return when {
         // These marks also commonly arrive as black variants, so use a light
         // tile instead of allowing a dark brand tile to hide the artwork.
-        "netflix" in normalized || "hbo" in normalized || "apple" in normalized -> Color(0xFFF1F1F1)
-        "marvel" in normalized -> Color(0xFFE62429)
-        "warner" in normalized -> Color(0xFF0B1D3A)
-        "universal" in normalized -> Color(0xFF111827)
-        "paramount" in normalized -> Color(0xFF0B2E52)
-        "disney" in normalized -> Color(0xFF09245C)
-        "a24" in normalized -> Color(0xFFE7E7E7)
-        else -> Color(0xFFF1F1F1)
+        "netflix" in normalized || "hbo" in normalized || "apple" in normalized -> YTLogoFallback
+        "marvel" in normalized -> YTMarvelRed
+        "warner" in normalized -> YTBrandNavy
+        "universal" in normalized -> YTBrandNavy
+        "paramount" in normalized -> YTBrandNavy
+        "disney" in normalized -> YTBrandNavy
+        "a24" in normalized -> YTLogoFallback
+        else -> YTLogoFallback
     }
 }

@@ -208,7 +208,7 @@ private fun SubscriptionContent(
                     Text(
                         text = if (selectedChannelFilterId != null) "CLEAR" else "ALL",
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                         color = YTBlueVerified,
                         modifier = Modifier
                             .clickable {
@@ -248,7 +248,7 @@ private fun SubscriptionContent(
                     Text(
                         text = filter,
                         fontSize = 13.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Medium,
                         color = if (isSelected) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onBackground
                     )
                 }
@@ -266,7 +266,7 @@ private fun SubscriptionContent(
                     Text(
                         text = if (channels.isEmpty()) "No Subscriptions Yet" else "No matching videos",
                         fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Spacer(modifier = Modifier.height(6.dp))
@@ -448,7 +448,7 @@ private fun ChannelStoryItem(
         Text(
             text = channel.name,
             fontSize = 11.sp,
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis

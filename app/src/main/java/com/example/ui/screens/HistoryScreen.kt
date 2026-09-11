@@ -95,7 +95,7 @@ fun HistoryScreen(
             Text(
                 text = if (selectedKeys.isEmpty()) "History" else "${selectedKeys.size} selected",
                 fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.weight(1f)
             )
@@ -234,7 +234,7 @@ private fun HistoryEntryRow(
                 text = if (dragOffset < 0f) "Remove" else "Watch",
                 color = if (dragOffset < 0f) YouTubeRed else MaterialTheme.colorScheme.primary,
                 fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Medium,
                 modifier = Modifier
                     .align(if (dragOffset < 0f) Alignment.CenterEnd else Alignment.CenterStart)
                     .padding(horizontal = 14.dp)

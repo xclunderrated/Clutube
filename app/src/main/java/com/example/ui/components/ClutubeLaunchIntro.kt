@@ -81,7 +81,7 @@ fun ClutubeLaunchIntro(
                 text = "Clutube",
                 color = MaterialTheme.colorScheme.onBackground,
                 fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.SemiBold
             )
         }
     }

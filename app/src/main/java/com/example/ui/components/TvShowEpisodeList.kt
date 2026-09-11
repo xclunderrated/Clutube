@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.tmdb.TmdbEpisodeItem
 import com.example.model.isUnreleased
+import com.example.ui.theme.YTSuccess
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
 import com.example.util.rememberOptimizedImageRequest
@@ -278,7 +279,7 @@ fun TvShowEpisodeList(
                         imageVector = if (allReleasedDownloaded) Icons.Default.CheckCircle else Icons.Default.Download,
                         contentDescription = seasonLabel,
                         tint = when {
-                            allReleasedDownloaded -> Color(0xFF4CAF50)
+                            allReleasedDownloaded -> YTSuccess
                             releasedSeasonEpisodes.isEmpty() -> MaterialTheme.colorScheme.onSurfaceVariant.copy(
                                 alpha = 0.38f
                             )
@@ -616,7 +617,7 @@ private fun EpisodeItemCard(
                         Icon(
                             imageVector = Icons.Default.Check,
                             contentDescription = "Watched",
-                            tint = Color(0xFF4CAF50),
+                            tint = YTSuccess,
                             modifier = Modifier.size(14.dp)
                         )
                     }
@@ -681,7 +682,7 @@ private fun EpisodeItemCard(
                         color = when {
                             isPlaying -> YouTubeRed
                             isUpcoming -> MaterialTheme.colorScheme.primary
-                            else -> Color(0xFF4CAF50)
+                            else -> YTSuccess
                         },
                         letterSpacing = 0.4.sp
                     )
@@ -801,7 +802,7 @@ private fun EpisodeItemCard(
                                     Icon(
                                         if (isQueued) Icons.Default.CheckCircle else Icons.Default.QueueMusic,
                                         contentDescription = null,
-                                        tint = if (isQueued) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurface,
+                                        tint = if (isQueued) YTSuccess else MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.size(18.dp)
                                     )
                                 },
@@ -826,7 +827,7 @@ private fun EpisodeItemCard(
                                     Icon(
                                         if (isDownloaded) Icons.Default.CheckCircle else Icons.Default.Download,
                                         contentDescription = null,
-                                        tint = if (isDownloaded) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurface,
+                                        tint = if (isDownloaded) YTSuccess else MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.size(18.dp)
                                     )
                                 },

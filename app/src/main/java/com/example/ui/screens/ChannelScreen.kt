@@ -76,6 +76,7 @@ import com.example.ui.components.CompactRelatedVideoCard
 import com.example.ui.components.StudioLogoAvatar
 import com.example.ui.components.VideoCard
 import com.example.ui.components.VideoCardSkeleton
+import com.example.ui.theme.YTAccentBlue
 import com.example.ui.theme.YTBlueVerified
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
@@ -145,7 +146,7 @@ fun ChannelScreen(
             Text(
                 text = channel.name,
                 fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -276,7 +277,7 @@ fun ChannelScreen(
                                 Text(
                                     text = channel.name,
                                     fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -352,13 +353,13 @@ fun ChannelScreen(
                                 Text(
                                     text = "Subscribed",
                                     fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Medium
                                 )
                             } else {
                                 Text(
                                     text = "Subscribe",
                                     fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Medium
                                 )
                             }
                         }
@@ -384,7 +385,7 @@ fun ChannelScreen(
                             Text(
                                 text = "Share",
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -427,7 +428,7 @@ fun ChannelScreen(
                                 Text(
                                     text = title,
                                     fontSize = 13.sp,
-                                    fontWeight = if (selectedTabIndex == index) FontWeight.Bold else FontWeight.Medium,
+                                    fontWeight = FontWeight.Medium,
                                     color = if (selectedTabIndex == index) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -485,7 +486,7 @@ fun ChannelScreen(
                                     Text(
                                         text = "Featured Spotlight",
                                         fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onBackground,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                                     )
@@ -538,7 +539,7 @@ fun ChannelScreen(
                                             Text(
                                                 text = "Blockbuster Movies",
                                                 fontSize = 15.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.Medium,
                                                 color = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
@@ -604,14 +605,14 @@ fun ChannelScreen(
                                             Icon(
                                                 imageVector = Icons.Default.Tv,
                                                 contentDescription = "Series",
-                                                tint = Color(0xFF4285F4),
+                                                tint = YTAccentBlue,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
                                                 text = "Original Series & Shows",
                                                 fontSize = 15.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.Medium,
                                                 color = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
@@ -663,7 +664,7 @@ fun ChannelScreen(
                             Text(
                                 text = "All Releases & Uploads",
                                 fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
                             )
@@ -818,7 +819,7 @@ private fun ChannelAboutSection(channel: ChannelItem) {
         Text(
             text = "About ${channel.name}",
             fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onBackground
         )
 
@@ -838,7 +839,7 @@ private fun ChannelAboutSection(channel: ChannelItem) {
         Text(
             text = "Channel details",
             fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onBackground
         )
 
@@ -907,7 +908,7 @@ private fun EmptyChannelState(
         Text(
             text = "No releases available for $channelName",
             fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onBackground
         )
         Spacer(modifier = Modifier.height(4.dp))
@@ -942,7 +943,7 @@ private fun EmptyChannelCategoryState(title: String, description: String) {
         Text(
             text = title,
             fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onBackground
         )
         Spacer(modifier = Modifier.height(4.dp))

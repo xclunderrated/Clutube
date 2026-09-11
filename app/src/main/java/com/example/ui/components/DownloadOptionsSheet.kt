@@ -218,7 +218,7 @@ fun DownloadOptionsSheet(
                         Text(
                             text = displayTitle,
                             fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -248,7 +248,7 @@ fun DownloadOptionsSheet(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Quality",
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -276,7 +276,7 @@ fun DownloadOptionsSheet(
                                 Text(
                                     text = quality.label,
                                     fontSize = 12.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold
+                                    fontWeight = FontWeight.Medium
                                 )
                                 Text(
                                     text = "~${formatBytes(estMb * 1024L * 1024L)}",
@@ -308,7 +308,7 @@ fun DownloadOptionsSheet(
             // is fetched after the download finishes (or on demand later).
             Text(
                 text = "Subtitles",
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 fontSize = 14.sp,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -329,7 +329,7 @@ fun DownloadOptionsSheet(
                             Text(
                                 text = label,
                                 fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold
+                                fontWeight = FontWeight.Medium
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
@@ -363,7 +363,7 @@ fun DownloadOptionsSheet(
                         Text(
                             text = "Download subtitles automatically",
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
@@ -434,7 +434,7 @@ fun DownloadOptionsSheet(
                         Text(
                             text = "Auto-download best torrent",
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
@@ -483,7 +483,7 @@ fun DownloadOptionsSheet(
                             Text(
                                 text = "Torrent sources ($enabledCount of ${torrentIndexers.size} on)",
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
@@ -579,7 +579,7 @@ fun DownloadOptionsSheet(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (itemCount > 1) "Download ($itemCount)" else "Download",
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             fontSize = 14.sp,
                             color = Color.White
                         )
@@ -603,7 +603,7 @@ fun DownloadOptionsSheet(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "Find Torrents",
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             fontSize = 14.sp,
                             color = Color.White
                         )
@@ -632,7 +632,7 @@ fun DownloadOptionsSheet(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (itemCount > 1) "Download ($itemCount)" else "Download",
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             fontSize = 14.sp,
                             color = Color.White
                         )

@@ -164,7 +164,7 @@ fun PlaybackPreferencesDialog(
                 Text(
                     text = "Offline subtitles",
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
 

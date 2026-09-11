@@ -365,7 +365,7 @@ fun WatchScreen(
                                     Text(
                                         text = if (video.mediaType == MediaType.TV_SHOW) "More shows" else "Up next",
                                         fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
@@ -582,7 +582,7 @@ fun WatchScreen(
                             Text(
                                 text = if (video.mediaType == MediaType.TV_SHOW) "More shows" else "More like this",
                                 fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                         }
@@ -748,7 +748,7 @@ private fun ComingSoonPlayerPlaceholder() {
                 text = "Coming soon",
                 color = Color.White,
                 fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Medium
             )
             Text(
                 text = "Use Notify me below for a release alert.",
@@ -790,7 +790,7 @@ private fun RelatedErrorRow(
             onClick = onRetry,
             modifier = Modifier.testTag("related_retry_button")
         ) {
-            Text(text = "Retry", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text(text = "Retry", fontWeight = FontWeight.Medium, fontSize = 13.sp)
         }
     }
 }

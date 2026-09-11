@@ -32,6 +32,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -207,7 +208,7 @@ fun YouTubePlayer(
                 text = gestureFeedback.orEmpty(),
                 color = Color.White,
                 fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Normal,
                 modifier = Modifier
                     .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(20.dp))
                     .padding(horizontal = 14.dp, vertical = 9.dp)
@@ -233,11 +234,11 @@ private fun PlayerErrorOverlay(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Default.ErrorOutline, null, tint = YouTubeRed, modifier = Modifier.size(34.dp))
             Spacer(modifier = Modifier.height(8.dp))
-            Text("Stream unavailable", color = Color.White, fontWeight = FontWeight.Bold)
+            Text("Stream unavailable", color = Color.White, fontWeight = FontWeight.Medium)
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = message ?: "The player could not load this title.",
-                color = Color.LightGray,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp
             )
             Spacer(modifier = Modifier.height(14.dp))
