@@ -5,12 +5,14 @@ import com.example.model.MediaType
 import com.example.model.StreamServer
 
 /**
- * The app-level stream catalog. VidSrc is the default documented embed player
- * and VidLink Pro remains the secondary provider.
+ * The app-level stream catalog. VidSrc is the default documented embed player,
+ * VidLink Pro remains the secondary provider, and VidFast is the fast
+ * multi-server tertiary provider.
  */
 object StreamService {
     const val VIDSRC_SERVER_ID = "vidsrc"
     const val VIDLINK_SERVER_ID = "vidlink"
+    const val VIDFAST_SERVER_ID = "vidfast"
     const val DEFAULT_SERVER_ID = VIDSRC_SERVER_ID
     const val DEFAULT_VIDSRC_SERVER_HOST = "vidsrc2.ru"
 
@@ -24,8 +26,23 @@ object StreamService {
         "vidsrc-me.su",
         "vidsrc-embed.ru",
         "vidsrc-embed.su",
-        "vsrc.su"
+        "vsrc.su",
+        "vidsrc.pm",
+        "vidsrc.to",
+        "vidsrc.cc"
     )
+
+    /**
+     * VidSrc-family hosts using the versioned embed path (e.g.
+     * `https://vidsrc.cc/v2/embed/movie/{id}`) instead of the standard
+     * `/embed/...` shape shared by the other mirrors.
+     */
+    private val VIDSRC_V2_HOSTS = setOf("vidsrc.cc")
+
+    /** Embed path prefix for a VidSrc mirror host (`/embed` or `/v2/embed`). */
+    fun vidSrcEmbedPrefix(host: String): String =
+        if (VIDSRC_V2_HOSTS.any { it.equals(host.trim(), ignoreCase = true) }) "/v2/embed"
+        else "/embed"
 
     private val blockedDevelopmentSourceMarkers = listOf(
         "interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
@@ -60,6 +77,14 @@ object StreamService {
             provider = "vidlink.pro",
             quality = "1080p Ultra Fast / Multi-Lang",
             urlTemplate = "https://vidlink.pro/movie/%s?autoplay=true",
+            isRecommended = true
+        ),
+        StreamServer(
+            id = VIDFAST_SERVER_ID,
+            name = "VidFast",
+            provider = "vidfast.pro",
+            quality = "4K / Fast Multi-Server",
+            urlTemplate = "https://vidfast.pro/movie/%s?autoPlay=true",
             isRecommended = true
         )
     )
@@ -137,10 +162,11 @@ object StreamService {
         return when (serverId) {
             VIDSRC_SERVER_ID -> {
                 val host = normalizeVidSrcServerHost(vidSrcHost)
+                val prefix = vidSrcEmbedPrefix(host)
                 if (mediaType == MediaType.TV_SHOW) {
-                    "https://$host/embed/tv/$cleanId/$s/$e?autoplay=1"
+                    "https://$host$prefix/tv/$cleanId/$s/$e?autoplay=1"
                 } else {
-                    "https://$host/embed/movie/$cleanId?autoplay=1"
+                    "https://$host$prefix/movie/$cleanId?autoplay=1"
                 }
             }
             "vidlink" -> {
@@ -148,6 +174,13 @@ object StreamService {
                     "https://vidlink.pro/tv/$cleanId/$s/$e?primaryColor=ff0000&secondaryColor=121212&iconColor=ffffff&autoplay=true"
                 } else {
                     "https://vidlink.pro/movie/$cleanId?primaryColor=ff0000&secondaryColor=121212&iconColor=ffffff&autoplay=true"
+                }
+            }
+            VIDFAST_SERVER_ID -> {
+                if (mediaType == MediaType.TV_SHOW) {
+                    "https://vidfast.pro/tv/$cleanId/$s/$e?autoPlay=true"
+                } else {
+                    "https://vidfast.pro/movie/$cleanId?autoPlay=true"
                 }
             }
             else -> {
