@@ -83,6 +83,10 @@ import com.example.model.titleGroupKey
 import com.example.model.releaseAlertId
 import com.example.ui.components.FilterPillRow
 import com.example.ui.components.FittedMediaThumbnail
+import com.example.ui.components.PreviewableThumbnail
+import com.example.ui.components.StopTrailerPreviewOnGridScroll
+import com.example.ui.components.StopTrailerPreviewOnListScroll
+import com.example.ui.components.TrailerPreviewSession
 import com.example.ui.components.VideoCard
 import com.example.ui.components.VideoCardSkeleton
 import com.example.ui.theme.YouTubeRed
@@ -214,6 +218,14 @@ fun HomeScreen(
                     gridState.scrollToItem(0)
                 } catch (_: Exception) {}
             }
+        }
+
+        // Hold-to-preview: stop only after a real scroll (buffered), so a
+        // light touch never kills the trailer.
+        StopTrailerPreviewOnListScroll(listState)
+        StopTrailerPreviewOnGridScroll(gridState)
+        androidx.compose.runtime.LaunchedEffect(selectedCategory) {
+            TrailerPreviewSession.deactivate()
         }
 
         // Report visible card ids so the ViewModel can enrich studios,
@@ -753,6 +765,7 @@ private fun ContinueWatchingSection(
         Spacer(modifier = Modifier.height(6.dp))
 
         val continueWatchingRowState = rememberLazyListState()
+        StopTrailerPreviewOnListScroll(continueWatchingRowState)
         LazyRow(
             state = continueWatchingRowState,
             contentPadding = PaddingValues(horizontal = 14.dp),
@@ -794,10 +807,9 @@ private fun ContinueWatchingCard(
             .clip(ContinueCardShape)
             .clickable(onClick = onClick)
     ) {
-        FittedMediaThumbnail(
-            thumbnailUrl = video.thumbnailUrl,
-            backdropUrl = video.backdropUrl,
-            contentDescription = video.title,
+        PreviewableThumbnail(
+            video = video,
+            onClick = onClick,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),

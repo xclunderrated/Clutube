@@ -117,6 +117,8 @@ fun ChannelScreen(
     val movies = remember(videos) { videos.filter { it.mediaType == MediaType.MOVIE } }
     val tvSeries = remember(videos) { videos.filter { it.mediaType == MediaType.TV_SHOW } }
     val spotlightItem = remember(videos) { videos.firstOrNull() }
+    val channelGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    com.example.ui.components.StopTrailerPreviewOnGridScroll(channelGridState)
 
     Column(
         modifier = modifier
@@ -188,6 +190,7 @@ fun ChannelScreen(
         // tablets so the channel page does not waste the available width on
         // one oversized card.
         LazyVerticalGrid(
+            state = channelGridState,
             columns = if (isTabletLayout) GridCells.Adaptive(minSize = 260.dp) else GridCells.Fixed(1),
             modifier = Modifier
                 .fillMaxSize()

@@ -49,6 +49,7 @@ import com.example.model.VideoItem
 import com.example.ui.theme.YTSuccess
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
+import com.example.ui.components.PreviewableThumbnail
 
 private val PosterShape = RoundedCornerShape(12.dp)
 private val RatingBadgeShape = RoundedCornerShape(6.dp)
@@ -106,17 +107,18 @@ fun MediaPosterCard(
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f) // Standard 2:3 cinematic poster ratio
         ) {
-            // Poster fills 100% of container with zero letterboxing
-            FittedMediaThumbnail(
-                thumbnailUrl = video.thumbnailUrl,
-                backdropUrl = video.backdropUrl,
-                posterUrl = video.posterUrl,
-                isPosterRatio = true,
-                contentDescription = video.title,
+            // Poster fills 100% of container with zero letterboxing.
+            // Hold-to-preview plays the 16:9 trailer letterboxed inside;
+            // only the mute button shows over it.
+            PreviewableThumbnail(
+                video = video,
+                onClick = onClick,
                 modifier = Modifier.fillMaxSize(),
                 imagePreset = ImagePreset.POSTER_CARD,
                 isWatched = isWatched,
-                shape = PosterShape
+                shape = PosterShape,
+                isPosterRatio = true,
+                overlayContent = null
             )
 
             // Gradient scrim for text legibility at bottom
@@ -234,15 +236,24 @@ fun MediaPosterCard(
                     .fillMaxWidth()
                     .padding(10.dp)
             ) {
-                Text(
-                    text = video.title,
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Normal,
-                    color = Color.White,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    lineHeight = 16.sp
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = video.title,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 16.sp
+                    )
+                    if (ratingFormatted != null) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        ImdbRatingBadge(rating = ratingFormatted, compact = true)
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(4.dp))
 
@@ -252,18 +263,7 @@ fun MediaPosterCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (ratingFormatted != null) {
-                            ImdbRatingBadge(rating = ratingFormatted, compact = true)
-                        }
-
                         if (releaseYear != null) {
-                            if (ratingFormatted != null) {
-                                Text(
-                                    text = " • ",
-                                    fontSize = 11.sp,
-                                    color = Color.White.copy(alpha = 0.7f)
-                                )
-                            }
                             Text(
                                 text = releaseYear,
                                 fontSize = 11.sp,

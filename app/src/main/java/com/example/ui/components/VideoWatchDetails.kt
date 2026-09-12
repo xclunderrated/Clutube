@@ -158,6 +158,15 @@ fun VideoWatchDetails(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+            // IMDb pill right next to the title.
+            if (!formattedRating.isNullOrBlank()) {
+                Spacer(modifier = Modifier.width(8.dp))
+                ImdbRatingBadge(
+                    rating = formattedRating,
+                    compact = true,
+                    modifier = Modifier.testTag("watch_rating")
+                )
+            }
             Spacer(modifier = Modifier.width(6.dp))
             Icon(
                 imageVector = if (isDescriptionExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
@@ -167,14 +176,7 @@ fun VideoWatchDetails(
             )
         }
 
-        // True IMDb pill under the title. Extra top padding for pill height.
-        if (!formattedRating.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(6.dp))
-            ImdbRatingBadge(
-                rating = formattedRating,
-                modifier = Modifier.testTag("watch_rating")
-            )
-        }
+        // The IMDb pill now sits next to the title above.
 
         // YouTube-style trailer views line under the title, e.g.
         // "1.2M trailer views". Real YouTube counts only; blank when unknown

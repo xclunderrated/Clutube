@@ -49,6 +49,8 @@ import com.example.model.playbackKey
 import com.example.model.titleGroupKey
 import com.example.model.releaseAlertId
 import com.example.ui.components.StudioLogoAvatar
+import com.example.ui.components.StopTrailerPreviewOnGridScroll
+import com.example.ui.components.StopTrailerPreviewOnListScroll
 import com.example.ui.components.VideoCard
 import com.example.ui.theme.YTBlueVerified
 import com.example.util.ImagePreset
@@ -173,6 +175,8 @@ private fun SubscriptionContent(
         // Hoisted so rotate/filter keeps position (was reset every change).
         val subListState = rememberLazyListState()
         val subGridState = rememberLazyGridState()
+        StopTrailerPreviewOnListScroll(subListState)
+        StopTrailerPreviewOnGridScroll(subGridState)
 
         Column(modifier = Modifier.fillMaxSize()) {
             if (channels.isNotEmpty()) {

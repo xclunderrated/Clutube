@@ -61,6 +61,7 @@ import com.example.model.playbackKey
 import com.example.ui.theme.YTBlueVerified
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
+import com.example.ui.components.PreviewableThumbnail
 
 private val ThumbnailShape = RoundedCornerShape(12.dp)
 private val BadgeShape = RoundedCornerShape(4.dp)
@@ -120,7 +121,10 @@ fun VideoCard(
         modifier = modifier
             .fillMaxWidth()
             .clickable(
-                onClick = onClick,
+                onClick = {
+                    TrailerPreviewSession.deactivate()
+                    onClick()
+                },
                 role = Role.Button,
                 onClickLabel = "Play ${video.title}"
             )
@@ -132,13 +136,9 @@ fun VideoCard(
             ?.takeIf { it > 0 }
             ?.let { String.format(java.util.Locale.US, "%.1f", it) }
 
-        FittedMediaThumbnail(
-            thumbnailUrl = video.thumbnailUrl,
-            backdropUrl = video.backdropUrl,
-            posterUrl = video.posterUrl,
-            logoUrl = video.logoUrl,
-            hasTitledBackdrop = video.hasTitledBackdrop,
-            contentDescription = video.title,
+        PreviewableThumbnail(
+            video = video,
+            onClick = onClick,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f),
@@ -291,16 +291,28 @@ fun VideoCard(
                         raw
                     }
                 }
-                Text(
-                    text = displayTitle,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    lineHeight = 20.sp,
-                    letterSpacing = (-0.1).sp
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = displayTitle,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 20.sp,
+                        letterSpacing = (-0.1).sp
+                    )
+                    if (!formattedRating.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        ImdbRatingBadge(
+                            rating = formattedRating,
+                            compact = true
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(3.dp))
 
@@ -358,8 +370,9 @@ fun VideoCard(
                         )
                     }
                 }
-                // Rating + format line under the channel name: star score plus
-                // season/episode totals for shows or runtime for movies.
+                // Format line under the channel name: season/episode totals
+                // for shows or runtime for movies. The IMDb pill now sits
+                // next to the title above.
                 // Totals render only when genuinely known (from TMDB details
                 // or card enrichment) — never placeholder defaults.
                 val extraInfo = remember(video) {
@@ -386,38 +399,17 @@ fun VideoCard(
                         else -> null
                     }
                 }
-                if (!formattedRating.isNullOrBlank() || !extraInfo.isNullOrBlank()) {
+                if (!extraInfo.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(3.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (!formattedRating.isNullOrBlank()) {
-                            ImdbRatingBadge(
-                                rating = formattedRating,
-                                compact = true
-                            )
-                        }
-                        if (!formattedRating.isNullOrBlank() && !extraInfo.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "•",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                        }
-                        if (!extraInfo.isNullOrBlank()) {
-                            Text(
-                                text = extraInfo,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                lineHeight = 16.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
+                    Text(
+                        text = extraInfo,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
                 if (!continueLabel.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(2.dp))

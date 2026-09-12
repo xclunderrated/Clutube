@@ -48,11 +48,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.model.AppNotification
 import com.example.model.MediaType
 import com.example.model.NotificationKind
@@ -61,11 +63,12 @@ import com.example.model.playbackKey
 import com.example.model.releaseAlertId
 import com.example.model.releaseDateMillis
 import com.example.ui.components.FittedMediaThumbnail
+import com.example.ui.components.ImdbRatingBadge
 import com.example.ui.components.PendingStudioPlaceholder
-import com.example.ui.components.StudioLogoAvatar
 import com.example.ui.components.isStudioPending
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
+import com.example.util.rememberOptimizedImageRequest
 import java.util.concurrent.TimeUnit
 import kotlin.math.ceil
 
@@ -352,6 +355,105 @@ fun NotificationsScreen(
 }
 
 /**
+ * Show/movie artwork tile for notification rows: prefers the TMDB title
+ * logo, then poster, then thumbnail — never the studio mark and never the
+ * app logo. Transparent logos sit fitted on a surface tile; photographic
+ * art fills it. Falls back to a title-initial tile when nothing loads.
+ */
+@Composable
+private fun ShowArtworkTile(
+    video: VideoItem,
+    modifier: Modifier = Modifier
+) {
+    val logoUrl = video.logoUrl?.takeIf { it.isNotBlank() }
+    val artUrl = logoUrl
+        ?: video.posterUrl?.takeIf { it.isNotBlank() }
+        ?: video.thumbnailUrl.takeIf { it.isNotBlank() }
+    val artRequest = rememberOptimizedImageRequest(
+        data = artUrl,
+        preset = ImagePreset.AVATAR
+    )
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        if (!artUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = artRequest,
+                contentDescription = video.title,
+                contentScale = if (logoUrl != null) ContentScale.Fit else ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(if (logoUrl != null) 4.dp else 0.dp)
+            )
+        } else {
+            Text(
+                text = video.title.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "•",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * IMDb rating pill + compact meta (year · runtime or S/E) for notification
+ * rows. Renders nothing when the title carries no known data.
+ */
+@Composable
+private fun NotificationMetaRow(
+    video: VideoItem,
+    season: Int? = null,
+    episode: Int? = null,
+    modifier: Modifier = Modifier
+) {
+    val rating = remember(video) {
+        video.rating?.takeIf { it > 0 }
+            ?.let { String.format(java.util.Locale.US, "%.1f", it) }
+    }
+    val meta = remember(video, season, episode) {
+        val year = video.releaseDateFormatted?.take(4)?.takeIf { it.all(Char::isDigit) }
+            ?: video.releaseDateIso?.take(4)?.takeIf { it.all(Char::isDigit) }
+        val extra = when {
+            video.mediaType == MediaType.TV_SHOW && season != null && episode != null &&
+                season > 0 && episode > 0 -> "S$season E$episode"
+            video.mediaType == MediaType.TV_SHOW &&
+                (video.totalSeasons > 1 || video.totalEpisodes > 1) ->
+                "${video.totalSeasons} Season" + (if (video.totalSeasons == 1) "" else "s")
+            video.mediaType == MediaType.MOVIE ->
+                video.runtimeMinutes?.takeIf { it > 0 }?.let { mins ->
+                    val hrs = mins / 60
+                    if (hrs > 0) "${hrs}h ${mins % 60}m" else "${mins}m"
+                }
+            else -> null
+        }
+        listOfNotNull(year, extra).joinToString(" · ")
+    }
+    if (rating.isNullOrBlank() && meta.isBlank()) return
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        if (!rating.isNullOrBlank()) {
+            ImdbRatingBadge(rating = rating, compact = true)
+        }
+        if (meta.isNotBlank()) {
+            Text(
+                text = meta,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/**
  * Netflix-style hero card for fresh release alerts: full-width 16:9 show art
  * with a NEW badge, studio row, and an explicit Watch Now CTA.
  */
@@ -437,12 +539,9 @@ private fun NotificationHeroCard(
                 .padding(start = 12.dp, end = 4.dp, top = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            StudioLogoAvatar(
-                logoUrl = video.channelAvatarUrl.takeIf { it.isNotBlank() }
-                    ?: video.posterUrl?.takeIf { it.isNotBlank() }
-                    ?: video.thumbnailUrl.takeIf { it.isNotBlank() },
-                contentDescription = video.channelName,
-                modifier = Modifier.size(34.dp)
+            ShowArtworkTile(
+                video = video,
+                modifier = Modifier.size(40.dp)
             )
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -517,6 +616,26 @@ private fun NotificationHeroCard(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
+
+        NotificationMetaRow(
+            video = video,
+            season = notification.season,
+            episode = notification.episode,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp)
+        )
+
+        val heroSynopsis = video.description.trim().takeIf { it.isNotBlank() }
+        if (heroSynopsis != null) {
+            Text(
+                text = heroSynopsis,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 16.sp
+            )
+        }
 
         TextButton(
             onClick = onClick,
@@ -612,12 +731,9 @@ private fun NotificationRow(
 
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StudioLogoAvatar(
-                    logoUrl = video.channelAvatarUrl.takeIf { it.isNotBlank() }
-                        ?: video.posterUrl?.takeIf { it.isNotBlank() }
-                        ?: video.thumbnailUrl.takeIf { it.isNotBlank() },
-                    contentDescription = video.channelName,
-                    modifier = Modifier.size(22.dp)
+                ShowArtworkTile(
+                    video = video,
+                    modifier = Modifier.size(34.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 if (isStudioPending(video.channelName)) {
@@ -649,6 +765,24 @@ private fun NotificationRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+            NotificationMetaRow(
+                video = video,
+                season = notification.season,
+                episode = notification.episode,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            val rowSynopsis = video.description.trim().takeIf { it.isNotBlank() }
+            if (rowSynopsis != null) {
+                Text(
+                    text = rowSynopsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 16.sp
+                )
+            }
             Text(
                 text = "$kindLabel · $relativeTime",
                 modifier = Modifier.padding(top = 5.dp),
@@ -836,6 +970,10 @@ private fun UpcomingReleasesShelf(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
+                        NotificationMetaRow(
+                            video = video,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
                         Text(
                             text = listOfNotNull(
                                 if (video.mediaType == MediaType.TV_SHOW) "TV series" else "Movie",
@@ -847,6 +985,18 @@ private fun UpcomingReleasesShelf(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        val upcomingSynopsis = video.description.trim().takeIf { it.isNotBlank() }
+                        if (upcomingSynopsis != null) {
+                            Text(
+                                text = upcomingSynopsis,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                lineHeight = 15.sp
+                            )
+                        }
                     }
                 }
             }

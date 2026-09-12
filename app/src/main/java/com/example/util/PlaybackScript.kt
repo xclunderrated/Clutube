@@ -32,9 +32,11 @@ internal object PlaybackScript {
                 // turned off. Mid-session toggles overwrite it via
                 // setBackgroundPlaybackEnabled().
                 window.__cluBackgroundPlayEnabled = ${if (backgroundPlayEnabled) "true" else "false"};
-                if (typeof window.__cluUserPaused === 'undefined') {
-                    window.__cluUserPaused = false;
-                }
+                // Reset on every fresh page build: the persistent WebView is
+                // shared across generations, so a stale true (audio-focus
+                // loss, explicit pause before a server switch) would wedge
+                // every resume guard below and leave fresh loads paused.
+                window.__cluUserPaused = false;
 
                 function isBackgroundPlayOn() {
                     return window.__cluBackgroundPlayEnabled !== false;
@@ -413,6 +415,10 @@ internal object PlaybackScript {
                             video.autoplay = false;
                             video.pause();
                         } catch (_) {}
+                        // Fresh loads that must stay paused (user paused
+                        // before a reload) mark explicit pause so the
+                        // resume guards below never revive them on hide.
+                        window.__cluUserPaused = true;
                         return;
                     }
                     if (!video || video.readyState < 2 ||
@@ -616,7 +622,10 @@ internal object PlaybackScript {
                 function preferenceKey() {
                     return preferredQuality + '|' + preferredSubtitles;
                 }
-                window.__cluPlaybackInterval = setInterval(function() {
+                window.__cluPlaybackInterval = null;
+                window.__cluPlaybackFast = true;
+                window.__cluPlaybackFastTicks = 0;
+                function __cluPlaybackTick() {
                     var usable = hookVideos();
                     var key = preferenceKey();
                     // Rebroadcast on change, plus once when a usable video
@@ -630,12 +639,21 @@ internal object PlaybackScript {
                     hadUsableVideo = usable;
                     reportReadyWhenUsable();
                     window.__cluReportPlayback();
-                    // Steady-state 2500ms (was 1500ms): matches the 2000ms
-                    // snapshot throttle above, cuts Compose recomposition
-                    // to ~0.4Hz without harming resume/UpNext. VidLink's
-                    // low-FPS stutter came from this + snapshot bridge
-                    // firing every 1.5s during playback.
-                }, 2500);
+                    // Two-phase cadence: poll fast (500ms) until the first
+                    // usable video so canplay/autoplay/ready fire promptly
+                    // on slow mounts, then drop to 2500ms steady-state to
+                    // match the 2000ms snapshot throttle and avoid
+                    // recomposition churn during playback. Bounded at ~20s
+                    // so nested-player pages (no top-document video, e.g.
+                    // VidSrc) still settle to slow polling.
+                    window.__cluPlaybackFastTicks += 1;
+                    if ((readyReported || window.__cluPlaybackFastTicks > 40) && window.__cluPlaybackFast) {
+                        window.__cluPlaybackFast = false;
+                        if (window.__cluPlaybackInterval) clearInterval(window.__cluPlaybackInterval);
+                        window.__cluPlaybackInterval = setInterval(__cluPlaybackTick, 2500);
+                    }
+                }
+                window.__cluPlaybackInterval = setInterval(__cluPlaybackTick, 500);
             })();
         """.trimIndent()
     }

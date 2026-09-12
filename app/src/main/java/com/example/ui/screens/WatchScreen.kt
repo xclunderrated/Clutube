@@ -66,6 +66,9 @@ import com.example.ui.components.SkipSegmentButton
 import com.example.ui.components.AmbientLightBackdrop
 import com.example.ui.components.CompactRelatedVideoCard
 import com.example.ui.components.CompactRelatedVideoCardSkeleton
+import com.example.ui.components.StopTrailerPreviewOnColumnScroll
+import com.example.ui.components.StopTrailerPreviewOnGridScroll
+import com.example.ui.components.StopTrailerPreviewOnListScroll
 import com.example.ui.components.VideoCard
 import com.example.ui.components.VideoCardSkeleton
 import com.example.ui.components.VideoWatchDetails
@@ -221,6 +224,12 @@ fun WatchScreen(
             nextMovie != null -> nextMovie.channelName
             else -> null
         }
+        androidx.compose.runtime.LaunchedEffect(video.id) {
+            com.example.ui.components.TrailerPreviewSession.deactivate()
+        }
+        // Hoisted (unconditional) so rotation doesn't reorder remembers.
+        val relatedGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+        val relatedListState = androidx.compose.foundation.lazy.rememberLazyListState()
         val onPlayNext: (() -> Unit)? = when {
             video.mediaType == MediaType.TV_SHOW && (nextEpisode != null || nextSeason != null) ->
                 onPlayNextEpisode
@@ -239,6 +248,7 @@ fun WatchScreen(
                 ) {
                     // Left Pane: Large Video Player + Video Details (Scrollable)
                     val leftScrollState = rememberScrollState()
+                    StopTrailerPreviewOnColumnScroll(leftScrollState)
                     Column(
                         modifier = Modifier
                             .weight(0.73f)
@@ -336,7 +346,9 @@ fun WatchScreen(
                     )
 
                     // Right Pane: two-card related grid for tablet-sized screens.
+                    StopTrailerPreviewOnGridScroll(relatedGridState)
                     LazyVerticalGrid(
+                        state = relatedGridState,
                         columns = GridCells.Fixed(2),
                         modifier = Modifier
                             .weight(0.36f)
@@ -463,6 +475,7 @@ fun WatchScreen(
                 // title and metadata below without shrinking the video.
                 val playerHeight = this@BoxWithConstraints.maxWidth * (9f / 16f)
                 val ambientArtwork = video.backdropUrl ?: video.thumbnailUrl
+                StopTrailerPreviewOnListScroll(relatedListState)
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     // Ambient blur (~48dp) is the single most expensive Compose
@@ -503,6 +516,7 @@ fun WatchScreen(
                         )
 
                         LazyColumn(
+                            state = relatedListState,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()

@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -71,6 +72,7 @@ import com.example.model.titleGroupKey
 import com.example.model.releaseAlertId
 import com.example.ui.components.VideoCard
 import com.example.ui.components.VideoCardSkeleton
+import com.example.ui.components.StopTrailerPreviewOnListScroll
 import com.example.ui.theme.YouTubeRed
 
 private val PopularSearchSuggestions = listOf(
@@ -125,6 +127,11 @@ fun SearchScreen(
     var durationFilter by rememberSaveable { mutableStateOf(SearchDurationFilter.ANY) }
     var sort by rememberSaveable { mutableStateOf(SearchSort.RELEVANCE) }
     val haptics = LocalHapticFeedback.current
+    val searchListState = rememberLazyListState()
+    StopTrailerPreviewOnListScroll(searchListState)
+    androidx.compose.runtime.LaunchedEffect(query) {
+        com.example.ui.components.TrailerPreviewSession.deactivate()
+    }
     val hasActiveFilters = typeFilter != SearchTypeFilter.ALL ||
         durationFilter != SearchDurationFilter.ANY ||
         sort != SearchSort.RELEVANCE
@@ -532,6 +539,7 @@ fun SearchScreen(
             }
         } else {
             LazyColumn(
+                state = searchListState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = 4.dp)

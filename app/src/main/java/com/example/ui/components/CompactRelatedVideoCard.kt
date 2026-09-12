@@ -53,6 +53,7 @@ import com.example.model.VideoItem
 import com.example.ui.theme.YTBlueVerified
 import com.example.ui.theme.YouTubeRed
 import com.example.util.ImagePreset
+import com.example.ui.components.PreviewableThumbnail
 
 /**
  * Compact, sleek horizontal card designed specifically for "Up Next & Related" side panels on tablets
@@ -91,7 +92,10 @@ fun CompactRelatedVideoCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .clickable(
-                onClick = onClick,
+                onClick = {
+                    TrailerPreviewSession.deactivate()
+                    onClick()
+                },
                 role = Role.Button,
                 onClickLabel = "Play ${video.title}"
             )
@@ -100,13 +104,9 @@ fun CompactRelatedVideoCard(
         verticalAlignment = Alignment.Top
     ) {
         // Compact 16:9 Thumbnail displaying uncropped poster with ambient background
-        FittedMediaThumbnail(
-            thumbnailUrl = video.thumbnailUrl,
-            backdropUrl = video.backdropUrl,
-            posterUrl = video.posterUrl,
-            logoUrl = video.logoUrl,
-            hasTitledBackdrop = video.hasTitledBackdrop,
-            contentDescription = video.title,
+        PreviewableThumbnail(
+            video = video,
+            onClick = onClick,
             modifier = Modifier
                 .width(132.dp)
                 .aspectRatio(16f / 9f),
@@ -209,15 +209,27 @@ fun CompactRelatedVideoCard(
                 .weight(1f)
                 .padding(top = 1.dp)
         ) {
-            Text(
-                text = video.title,
-                fontSize = 13.5.sp,
-                fontWeight = FontWeight.Normal,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 18.sp
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = video.title,
+                    modifier = Modifier.weight(1f),
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 18.sp
+                )
+                val relatedRating = remember(video) {
+                    video.rating?.takeIf { it > 0 }?.let { String.format(java.util.Locale.US, "%.1f", it) }
+                }
+                if (!relatedRating.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    ImdbRatingBadge(rating = relatedRating, compact = true)
+                }
+            }
 
             Spacer(modifier = Modifier.height(3.dp))
 
@@ -246,17 +258,14 @@ fun CompactRelatedVideoCard(
                 }
             }
 
-            // Cleaner single-line metadata with rating + year (YouTube look kept).
+            // Cleaner single-line metadata with year + type (rating lives
+            // in the IMDb pill next to the title above).
             val releaseYear = remember(video) {
                 video.releaseDateFormatted?.take(4)?.takeIf { it.all(Char::isDigit) }
                     ?: video.releaseDateIso?.take(4)?.takeIf { it.all(Char::isDigit) }
             }
-            val ratingText = remember(video) {
-                video.rating?.takeIf { it > 0 }?.let { String.format(java.util.Locale.US, "%.1f", it) }
-            }
-            val metadata = remember(video, releaseYear, ratingText) {
+            val metadata = remember(video, releaseYear) {
                 buildList {
-                    if (!ratingText.isNullOrBlank()) add("★ $ratingText")
                     if (!releaseYear.isNullOrBlank()) add(releaseYear)
                     if (video.mediaType == MediaType.TV_SHOW) add("TV Series")
                     else if (video.mediaType == MediaType.MOVIE) add("Movie")

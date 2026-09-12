@@ -23,15 +23,15 @@ import com.example.model.NotificationKind
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Netflix-style system notifications: the status-bar small icon stays the app
- * glyph (Android requires a monochrome template there — a full-color poster
- * cannot go in [NotificationCompat.Builder.setSmallIcon]), while the
- * per-show/series artwork arrives via [NotificationCompat.Builder.setLargeIcon]
- * (studio/show tile) and [NotificationCompat.BigPictureStyle] (16:9 hero).
+ * Netflix-style system notifications: the status-bar small icon is a
+ * monochrome glyph (Android renders small icons as a white template, so a
+ * full-color poster or the app logo can never go there), while the actual
+ * movie/show artwork arrives via [NotificationCompat.Builder.setLargeIcon]
+ * (poster/logo tile) and [NotificationCompat.BigPictureStyle] (16:9 hero).
  *
  * Image loading is best-effort with a short timeout: any failure falls back
- * to the previous text-only notification so a slow CDN can never suppress
- * the alert itself.
+ * to a locally drawn letter tile (never the app logo), and then to
+ * text-only, so a slow CDN can never suppress the alert itself.
  */
 object ReleaseNotificationPublisher {
     /** Legacy channel, kept so already-created channels are not orphaned. */
@@ -138,11 +138,13 @@ object ReleaseNotificationPublisher {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Per-show artwork: 16:9 hero for BigPicture, portrait/square tile
-        // for the large icon. Both optional — text-only on any failure.
+        // Show/movie artwork first: poster tile, then the TMDB title logo,
+        // then backdrop/thumbnail, then the studio avatar. The app logo is
+        // never used — when every URL fails, a letter tile is drawn below.
         val heroUrl = video.backdropUrl?.takeIf { it.isNotBlank() }
             ?: video.thumbnailUrl.takeIf { it.isNotBlank() }
         val tileUrl = video.posterUrl?.takeIf { it.isNotBlank() }
+            ?: video.logoUrl?.takeIf { it.isNotBlank() }
             ?: video.thumbnailUrl.takeIf { it.isNotBlank() }
             ?: video.channelAvatarUrl.takeIf { it.isNotBlank() }
         val heroBitmap = heroUrl?.let { loadBitmap(context, it, HERO_WIDTH, HERO_HEIGHT) }
@@ -150,18 +152,45 @@ object ReleaseNotificationPublisher {
             loadBitmap(context, tileUrl, LARGE_ICON_SIZE, LARGE_ICON_SIZE)
         } else {
             null
-        }
+        } ?: letterTileBitmap(video.title)
+
+        // Rich text: IMDb rating + meta (year · runtime or S/E) plus the
+        // synopsis, so the alert says what the title is about. All
+        // blank-safe — unknown pieces are omitted, never faked.
+        val metaLine = buildList {
+            video.rating?.takeIf { it > 0 }?.let { add("★ %.1f".format(java.util.Locale.US, it)) }
+            val year = video.releaseDateFormatted?.take(4)?.takeIf { it.all(Char::isDigit) }
+                ?: video.releaseDateIso?.take(4)?.takeIf { it.all(Char::isDigit) }
+            if (!year.isNullOrBlank()) add(year)
+            if (video.mediaType == com.example.model.MediaType.TV_SHOW) {
+                val s = notification.season ?: video.currentSeason
+                val e = notification.episode ?: video.currentEpisode
+                if (s > 0 && e > 0) add("S$s E$e")
+            } else {
+                video.runtimeMinutes?.takeIf { it > 0 }?.let { mins ->
+                    val hrs = mins / 60
+                    add(if (hrs > 0) "${hrs}h ${mins % 60}m" else "${mins}m")
+                }
+            }
+        }.joinToString(" · ")
+        val synopsis = video.description.trim().takeIf { it.isNotBlank() }
+        val expandedText = listOfNotNull(
+            metaLine.takeIf { it.isNotBlank() },
+            notification.message,
+            synopsis
+        ).joinToString("\n\n")
 
         val builder = NotificationCompat.Builder(context, channelFor(notification.kind))
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_now_playing)
             .setContentTitle(notification.title)
-            .setContentText(notification.message)
+            .setContentText(if (metaLine.isNotBlank()) "$metaLine · ${notification.message}" else notification.message)
             .setSubText(video.channelName.takeIf { it.isNotBlank() })
             .setContentIntent(contentIntent)
             .setDeleteIntent(dismissIntent)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_EVENT)
             .setPriority(priorityFor(notification.kind))
+            .setLargeIcon(tileBitmap)
             .addAction(
                 NotificationCompat.Action.Builder(0, "Watch Now", watchNowIntent).build()
             )
@@ -170,21 +199,42 @@ object ReleaseNotificationPublisher {
                 NotificationCompat.BigPictureStyle()
                     .bigPicture(heroBitmap)
                     .bigLargeIcon(null as Bitmap?)
-                    .setSummaryText(notification.message)
+                    .setSummaryText(metaLine.takeIf { it.isNotBlank() } ?: notification.message)
             )
-            // Keep the show tile visible in the collapsed row.
-            (tileBitmap ?: heroBitmap)?.let(builder::setLargeIcon)
         } else {
-            builder.setStyle(NotificationCompat.BigTextStyle().bigText(notification.message))
-            tileBitmap?.let(builder::setLargeIcon)
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(expandedText))
         }
         if (NotificationManagerCompat.from(context).areNotificationsEnabled()) {
             NotificationManagerCompat.from(context).notify(requestCode, builder.build())
         }
     }
 
-    private suspend fun loadBitmap(context: Context, url: String, width: Int, height: Int): Bitmap? {
-        return withTimeoutOrNull(IMAGE_TIMEOUT_MS) {
+    /**
+     * Last-resort large icon: title initial on a dark tile, drawn locally.
+     * Guarantees the notification shows title art even with no connectivity
+     * instead of falling back to the app icon.
+     */
+    private fun letterTileBitmap(title: String): Bitmap {
+        val size = LARGE_ICON_SIZE
+        return runCatching {
+            val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bitmap)
+            canvas.drawColor(0xFF111827.toInt())
+            val initial = title.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "•"
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.WHITE
+                textSize = size * 0.44f
+                textAlign = android.graphics.Paint.Align.CENTER
+            }
+            val y = size / 2f - (paint.descent() + paint.ascent()) / 2f
+            canvas.drawText(initial, size / 2f, y, paint)
+            bitmap
+        }.getOrElse {
+            Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        }
+    }
+
+    private suspend fun loadBitmap(context: Context, url: String, width: Int, height: Int): Bitmap? {        return withTimeoutOrNull(IMAGE_TIMEOUT_MS) {
             runCatching {
                 val request = ImageRequest.Builder(context)
                     .data(url)
