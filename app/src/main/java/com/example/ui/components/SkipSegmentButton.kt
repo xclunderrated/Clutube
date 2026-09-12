@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -40,8 +41,10 @@ fun SkipSegmentButton(
 ) {
     AnimatedVisibility(
         visible = visible && segment != null,
-        enter = fadeIn(),
-        exit = fadeOut(),
+        // Tap must feel instant: quick fade-in, near-instant fade-out so the
+        // pill is gone the moment it is touched (no linger + reappear flash).
+        enter = fadeIn(animationSpec = tween(150)),
+        exit = fadeOut(animationSpec = tween(80)),
         modifier = modifier
     ) {
         val current = segment ?: return@AnimatedVisibility

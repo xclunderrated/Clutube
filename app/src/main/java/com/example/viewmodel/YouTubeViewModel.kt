@@ -136,6 +136,8 @@ data class YouTubeUiState(
     val isAutoNextEpisodeEnabled: Boolean = true,
     /** Background play: audio continues with screen off / app backgrounded. */
     val isBackgroundPlayEnabled: Boolean = true,
+    /** YouTube-like fullscreen: portrait stays vertical, rotate → landscape. */
+    val isFullscreenFollowRotationEnabled: Boolean = true,
     /**
      * Offline (downloaded-file) now-playing surfaced to the foreground
      * service so screen-off / background audio keeps working with the same
@@ -405,6 +407,7 @@ class YouTubeViewModel : ViewModel() {
                 watchHistory = savedHistory,
                 isAutoNextEpisodeEnabled = manager.isAutoNextEnabled,
                 isBackgroundPlayEnabled = manager.isBackgroundPlayEnabled,
+                isFullscreenFollowRotationEnabled = manager.isFullscreenFollowRotationEnabled,
                 isSkipSegmentsEnabled = manager.isSkipSegmentsEnabled,
                 isSkipIntroEnabled = manager.isSkipIntroEnabled,
                 isSkipRecapEnabled = manager.isSkipRecapEnabled,
@@ -505,6 +508,7 @@ class YouTubeViewModel : ViewModel() {
         // Push the persisted background-play choice into the WebView bridge so
         // screen-off behavior matches settings from the first playback.
         com.example.util.PlayerViewManager.setBackgroundPlaybackEnabled(manager.isBackgroundPlayEnabled)
+        com.example.util.FullscreenHelper.followRotationEnabled = manager.isFullscreenFollowRotationEnabled
     }
 
     fun selectTab(index: Int) {
@@ -1947,6 +1951,12 @@ class YouTubeViewModel : ViewModel() {
         com.example.util.PlayerViewManager.setBackgroundPlaybackEnabled(enabled)
     }
 
+    fun setFullscreenFollowRotationEnabled(enabled: Boolean) {
+        settingsManager?.isFullscreenFollowRotationEnabled = enabled
+        _uiState.update { it.copy(isFullscreenFollowRotationEnabled = enabled) }
+        com.example.util.FullscreenHelper.followRotationEnabled = enabled
+    }
+
     /**
      * Called from MainActivity.onStop when the app leaves the foreground.
      * With background play ON this is a no-op (audio continues); with it OFF
@@ -2665,7 +2675,24 @@ class YouTubeViewModel : ViewModel() {
         val state = _uiState.value
         val video = state.currentPlayingVideo ?: return
         if (!state.isSkipSegmentsEnabled) return
+        // Instant-hide: mark dismissed BEFORE the async seek lands. The next
+        // provider snapshot still reports a position inside [start,end] for
+        // ~1-2s (JS bridge round-trip), and activeSkipSegmentFor() would
+        // otherwise re-select the same segment and make the pill flicker back.
+        // Identity is videoKey|type|start|end, so this is scoped to this
+        // episode and cleared on video change via clearSkipDismissals().
+        dismissedSkipKeys.add(skipSegmentIdentityKey(video.playbackKey(), segment))
         cancelPendingSkipAutoSkip()
+        skipAutoSkipArmedKey = null
+        // Optimistically hide until the post-seek snapshot lands.
+        _uiState.update { current ->
+            if (current.activeSkipSegment == segment) current.copy(activeSkipSegment = null)
+            else current
+        }
+        // Hide the native fullscreen pill on the same tap. The WatchScreen
+        // DisposableEffect also clears it on activeSkipSegment->null, but that
+        // waits for the StateFlow emit; this is synchronous with the touch.
+        com.example.util.FullscreenHelper.clearSkipTarget()
         if (segment.isNextEpisodeStyle) {
             if (hasNextTarget()) {
                 playNextEpisode()
@@ -2692,16 +2719,9 @@ class YouTubeViewModel : ViewModel() {
             } else {
                 position + 30.0
             }
-            // Open-ended segments contain every later position, so without
-            // this the pill would reappear on the next snapshot (and auto-skip
-            // would step +30s all the way to the end of the media).
-            dismissedSkipKeys.add(skipSegmentIdentityKey(video.playbackKey(), segment))
+            // Dismissal was already recorded optimistically at tap time (see
+            // above); the seek target below only moves playback.
             com.example.util.PlayerViewManager.seekTo(target)
-        }
-        // Optimistically hide until the post-seek snapshot lands.
-        _uiState.update { current ->
-            if (current.activeSkipSegment == segment) current.copy(activeSkipSegment = null)
-            else current
         }
     }
 
