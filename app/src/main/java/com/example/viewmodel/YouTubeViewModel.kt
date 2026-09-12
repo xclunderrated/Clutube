@@ -1925,6 +1925,23 @@ class YouTubeViewModel : ViewModel() {
     }
 
     /**
+     * History entry for a single episode, if it was ever watched.
+     * Used by the Watch page to render a YouTube-style progress bar plus
+     * second-precise timestamp under each episode row. Returns null when
+     * there is no history (row shows no progress UI).
+     */
+    fun getEpisodeWatchEntry(season: Int, episode: Int): WatchHistoryEntry? {
+        val current = _uiState.value
+        val playing = current.currentPlayingVideo ?: return null
+        if (playing.mediaType != MediaType.TV_SHOW) return null
+        val key = playing.copy(
+            currentSeason = season.coerceAtLeast(1),
+            currentEpisode = episode.coerceAtLeast(1)
+        ).playbackKey()
+        return current.watchHistory.firstOrNull { it.key == key }
+    }
+
+    /**
      * Correctable watched toggle for a single episode. Marks the episode's
      * history entry completed (creating one when none exists) or reopens it
      * when already completed. Series-level [watchedVideoIds] are left alone

@@ -66,6 +66,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.tmdb.TmdbEpisodeItem
+import com.example.model.WatchHistoryEntry
+import com.example.model.formatPlaybackTime
 import com.example.model.isUnreleased
 import com.example.ui.theme.YTSuccess
 import com.example.ui.theme.YouTubeRed
@@ -119,6 +121,8 @@ fun TvShowEpisodeList(
     isEpisodeDownloaded: (Int, Int) -> Boolean = { _, _ -> false },
     getEpisodeDownloadProgress: (Int, Int) -> Int? = { _, _ -> null },
     isEpisodeWatched: (Int, Int) -> Boolean = { _, _ -> false },
+    /** Watch-history entry per episode, if ever watched. Null = no progress UI. */
+    getEpisodeWatchProgress: (Int, Int) -> WatchHistoryEntry? = { _, _ -> null },
     watchedCountBySeason: Map<Int, Int> = emptyMap(),
     totalCountBySeason: Map<Int, Int> = emptyMap(),
     isLoading: Boolean = false,
@@ -426,6 +430,11 @@ fun TvShowEpisodeList(
                             val isDownloaded = isEpisodeDownloaded(episode.seasonNumber, episode.episodeNumber)
                             val progress = getEpisodeDownloadProgress(episode.seasonNumber, episode.episodeNumber)
                             val isWatched = isEpisodeWatched(episode.seasonNumber, episode.episodeNumber)
+                            val watchEntry = if (isUpcoming) {
+                                null
+                            } else {
+                                getEpisodeWatchProgress(episode.seasonNumber, episode.episodeNumber)
+                            }
                             EpisodeItemCard(
                                 episode = episode,
                                 thumbnailUrl = episode.stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
@@ -433,6 +442,7 @@ fun TvShowEpisodeList(
                                 isPlaying = isCurrent,
                                 isUpcoming = isUpcoming,
                                 isWatched = isWatched,
+                                watchEntry = watchEntry,
                                 isAlertActive = isEpisodeAlertActive(episode.seasonNumber, episode.episodeNumber),
                                 isDownloaded = isDownloaded,
                                 downloadProgress = progress,
@@ -504,6 +514,7 @@ private fun EpisodeItemCard(
     onNotify: () -> Unit,
     isDownloaded: Boolean = false,
     isWatched: Boolean = false,
+    watchEntry: WatchHistoryEntry? = null,
     downloadProgress: Int? = null,
     isQueued: Boolean = false,
     onQueue: (() -> Unit)? = null,
@@ -661,6 +672,36 @@ private fun EpisodeItemCard(
                         )
                     }
                 }
+
+                // YouTube-style watch progress: thin track flush to the
+                // thumbnail bottom edge, red fill to the second-precise
+                // position. Completed rows render a full bar.
+                val watchFraction: Float? = when {
+                    isUpcoming -> null
+                    watchEntry == null -> null
+                    watchEntry.durationSeconds <= 0L -> null
+                    watchEntry.completed -> 1f
+                    watchEntry.positionSeconds <= 0L -> null
+                    else -> watchEntry.progressFraction.coerceIn(0f, 1f).takeIf { it > 0f }
+                }
+                if (watchFraction != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(Color.White.copy(alpha = 0.35f))
+                            .testTag("episode_progress_bar_${episode.seasonNumber}_${episode.episodeNumber}")
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .fillMaxWidth(watchFraction.coerceIn(0f, 1f))
+                                .height(3.dp)
+                                .background(YouTubeRed)
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.width(8.dp))
@@ -718,6 +759,42 @@ private fun EpisodeItemCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         lineHeight = 14.sp
+                    )
+                }
+                // Clean second-precise progression under every watched row.
+                // Partial: "12:34 / 45:00 • 32:26 left". Completed with a real
+                // duration: "Watched • 45:00". Synthetic 1s/1s manual marks
+                // show just "Watched". Hidden when no history / unknown
+                // duration / upcoming so rows stay clean.
+                val progressLine: String? = when {
+                    isUpcoming -> null
+                    watchEntry == null -> null
+                    watchEntry.durationSeconds <= 0L -> null
+                    watchEntry.completed -> {
+                        if (watchEntry.durationSeconds > 1L) {
+                            "Watched • ${formatPlaybackTime(watchEntry.durationSeconds)}"
+                        } else {
+                            "Watched"
+                        }
+                    }
+                    watchEntry.positionSeconds <= 0L -> null
+                    else -> "${formatPlaybackTime(watchEntry.positionSeconds)} / " +
+                        "${formatPlaybackTime(watchEntry.durationSeconds)} • " +
+                        "${formatPlaybackTime(watchEntry.remainingSeconds)} left"
+                }
+                if (progressLine != null) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = progressLine,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 14.sp,
+                        modifier = Modifier.testTag(
+                            "episode_progress_${episode.seasonNumber}_${episode.episodeNumber}"
+                        )
                     )
                 }
             }

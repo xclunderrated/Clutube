@@ -58,6 +58,7 @@ import com.example.model.CommentItem
 import com.example.model.MediaType
 import com.example.model.PlayerSnapshot
 import com.example.model.VideoItem
+import com.example.model.WatchHistoryEntry
 import com.example.model.playbackKey
 import com.example.model.isUnreleased
 import com.example.ui.components.TvShowEpisodeList
@@ -135,6 +136,8 @@ fun WatchScreen(
     onPlayEpisodeNext: (Int, Int) -> Unit = { _, _ -> },
     onToggleEpisodeWatched: (Int, Int) -> Unit = { _, _ -> },
     isEpisodeWatched: (Int, Int) -> Boolean = { _, _ -> false },
+    /** Watch-history entry per episode, if ever watched. Null = no progress UI. */
+    getEpisodeWatchProgress: (Int, Int) -> WatchHistoryEntry? = { _, _ -> null },
     watchedCountBySeason: Map<Int, Int> = emptyMap(),
     totalCountBySeason: Map<Int, Int> = emptyMap(),
     onDownloadMovie: ((VideoItem) -> Unit)? = null,
@@ -317,6 +320,7 @@ fun WatchScreen(
                                 isEpisodeDownloaded = isEpisodeDownloaded,
                                 getEpisodeDownloadProgress = getEpisodeDownloadProgress,
                                 isEpisodeWatched = isEpisodeWatched,
+                                getEpisodeWatchProgress = getEpisodeWatchProgress,
                                 watchedCountBySeason = watchedCountBySeason,
                                 totalCountBySeason = totalCountBySeason,
                             )
@@ -559,6 +563,7 @@ fun WatchScreen(
                                 isEpisodeDownloaded = isEpisodeDownloaded,
                                 getEpisodeDownloadProgress = getEpisodeDownloadProgress,
                                 isEpisodeWatched = isEpisodeWatched,
+                                getEpisodeWatchProgress = getEpisodeWatchProgress,
                                 watchedCountBySeason = watchedCountBySeason,
                                 totalCountBySeason = totalCountBySeason,
                             )

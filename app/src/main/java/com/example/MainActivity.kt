@@ -1350,6 +1350,9 @@ fun YouTubeApp(
                     onPlayEpisodeNext = { season, episode -> viewModel.playEpisodeNext(season, episode) },
                     onToggleEpisodeWatched = { season, episode -> viewModel.toggleEpisodeWatched(season, episode) },
                     isEpisodeWatched = { season, episode -> viewModel.isEpisodeWatched(season, episode) },
+                    getEpisodeWatchProgress = { season, episode ->
+                        viewModel.getEpisodeWatchEntry(season, episode)
+                    },
                     watchedCountBySeason = remember(video.playbackKey(), uiState.watchHistory, uiState.tvEpisodes) {
                         uiState.tvEpisodes.groupBy { it.seasonNumber }
                             .mapValues { (_, eps) ->
