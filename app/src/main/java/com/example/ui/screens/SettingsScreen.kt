@@ -77,6 +77,8 @@ fun SettingsScreen(
     onToggleAutoNextEpisode: () -> Unit = {},
     isBackgroundPlayEnabled: Boolean = true,
     onSetBackgroundPlayEnabled: (Boolean) -> Unit = {},
+    isFullscreenFollowRotationEnabled: Boolean = true,
+    onSetFullscreenFollowRotationEnabled: (Boolean) -> Unit = {},
     showContinueWatchingOnHome: Boolean = true,
     onSetContinueWatchingOnHome: (Boolean) -> Unit = {},
     // Skip segments (TheIntroDB)
@@ -213,6 +215,22 @@ fun SettingsScreen(
                         checked = isBackgroundPlayEnabled,
                         onCheckedChange = onSetBackgroundPlayEnabled,
                         modifier = Modifier.testTag("background_play_toggle")
+                    )
+                }
+            )
+        }
+        item(key = "row_fullscreen_rotation", contentType = "row") {
+            SettingsRow(
+                icon = Icons.Default.PlayArrow,
+                title = "Fullscreen follows rotation",
+                subtitle = if (isFullscreenFollowRotationEnabled) "On · portrait stays vertical, rotate for landscape"
+                else "Off · fullscreen always forces landscape",
+                onClick = { onSetFullscreenFollowRotationEnabled(!isFullscreenFollowRotationEnabled) },
+                trailingContent = {
+                    Switch(
+                        checked = isFullscreenFollowRotationEnabled,
+                        onCheckedChange = onSetFullscreenFollowRotationEnabled,
+                        modifier = Modifier.testTag("fullscreen_follow_rotation_toggle")
                     )
                 }
             )

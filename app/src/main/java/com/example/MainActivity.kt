@@ -841,6 +841,13 @@ fun YouTubeApp(
         viewModel.initSettings(context.applicationContext)
     }
 
+    // Keep the native fullscreen orientation mode in sync with Settings.
+    // ViewModel also pushes on init/toggle; this covers process-restore.
+    androidx.compose.runtime.LaunchedEffect(uiState.isFullscreenFollowRotationEnabled) {
+        com.example.util.FullscreenHelper.followRotationEnabled =
+            uiState.isFullscreenFollowRotationEnabled
+    }
+
     val isMobileLaunch = LocalConfiguration.current.screenWidthDp < 600
     var showLaunchIntro by rememberSaveable { mutableStateOf(isMobileLaunch) }
     LaunchedEffect(isMobileLaunch) {
@@ -1452,6 +1459,8 @@ fun YouTubeApp(
                 onToggleAutoNextEpisode = { viewModel.toggleAutoNextEpisode() },
                 isBackgroundPlayEnabled = uiState.isBackgroundPlayEnabled,
                 onSetBackgroundPlayEnabled = { viewModel.setBackgroundPlayEnabled(it) },
+                isFullscreenFollowRotationEnabled = uiState.isFullscreenFollowRotationEnabled,
+                onSetFullscreenFollowRotationEnabled = { viewModel.setFullscreenFollowRotationEnabled(it) },
                 showContinueWatchingOnHome = uiState.showContinueWatchingOnHome,
                 onSetContinueWatchingOnHome = { viewModel.setShowContinueWatchingOnHome(it) },
                 isSkipSegmentsEnabled = uiState.isSkipSegmentsEnabled,

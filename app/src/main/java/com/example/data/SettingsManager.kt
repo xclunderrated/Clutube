@@ -76,6 +76,15 @@ class SettingsManager(context: Context) {
         get() = prefs.getBoolean(KEY_BACKGROUND_PLAY_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_BACKGROUND_PLAY_ENABLED, value).apply()
 
+    /**
+     * YouTube-like fullscreen: when true (default), entering embed fullscreen
+     * while portrait keeps vertical fullscreen and follows the sensor to
+     * landscape on rotate. When false, fullscreen always forces landscape.
+     */
+    var isFullscreenFollowRotationEnabled: Boolean
+        get() = prefs.getBoolean(KEY_FULLSCREEN_FOLLOW_ROTATION, true)
+        set(value) = prefs.edit().putBoolean(KEY_FULLSCREEN_FOLLOW_ROTATION, value).apply()
+
     /** Persisted Watch Later sort (You tab). Unknown values fall back to RECENTLY_ADDED. */
     var watchLaterSort: com.example.model.WatchLaterSort
         get() = runCatching {
@@ -485,6 +494,7 @@ class SettingsManager(context: Context) {
         private const val SERVER_ORDER_SEPARATOR = "|"
         private const val KEY_AUTO_NEXT_ENABLED = "auto_next_enabled"
         private const val KEY_BACKGROUND_PLAY_ENABLED = "background_play_enabled"
+        private const val KEY_FULLSCREEN_FOLLOW_ROTATION = "fullscreen_follow_rotation"
         private const val KEY_WATCH_LATER_SORT = "watch_later_sort"
         private const val KEY_DEVICE_LAYOUT_MODE = "device_layout_mode"
         private const val KEY_SKIP_SEGMENTS_ENABLED = "skip_segments_enabled"

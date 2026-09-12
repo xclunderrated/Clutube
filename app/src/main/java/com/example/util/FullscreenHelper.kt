@@ -39,6 +39,14 @@ object FullscreenHelper {
     private var playerViewRestoreContainer: ViewGroup? = null
     private var preservingPlayerReload = false
 
+    /**
+     * YouTube-like fullscreen orientation. When true (default), fullscreen
+     * stays in the current orientation — portrait stays vertical fullscreen —
+     * and follows the sensor when the user rotates. When false, fullscreen
+     * forces landscape (legacy behavior). Set from MainActivity via ViewModel.
+     */
+    var followRotationEnabled: Boolean = true
+
     // Up Next must live in the fullscreen container because the provider's
     // custom WebView is attached above the Compose hierarchy.
     private var upNextTargetKey: String? = null
@@ -140,8 +148,14 @@ object FullscreenHelper {
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         _isFullscreen.value = true
-        // Force horizontal (landscape) orientation in fullscreen
-        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        // YouTube-like when followRotationEnabled: stay vertical if the phone
+        // is vertical; sensor rotation still moves to landscape. Legacy OFF
+        // forces landscape.
+        activity.requestedOrientation = if (followRotationEnabled) {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
     }
 
     fun hideCustomView(activity: Activity) {
@@ -198,7 +212,11 @@ object FullscreenHelper {
         insetsController.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         _isFullscreen.value = true
-        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        activity.requestedOrientation = if (followRotationEnabled) {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
     }
 
     fun toggleFullscreen(activity: Activity) {
@@ -277,6 +295,16 @@ object FullscreenHelper {
 
     /** Clears a skip target only if it still belongs to the caller that set it. */
     fun clearSkipTarget(key: String? = null) {
+        // Tap path needs the pill gone on ACTION_DOWN, not after a handler
+        // post. Removing the overlay view is safe on the main thread; state
+        // is still cleared on the handler for background callers.
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            if (key == null || key == skipTargetKey) {
+                clearSkipTargetInternal()
+                return
+            }
+            return
+        }
         mainHandler.post {
             if (key != null && key != skipTargetKey) return@post
             clearSkipTargetInternal()
@@ -424,7 +452,12 @@ object FullscreenHelper {
 
     private fun triggerSkip(key: String?) {
         if (key == null || key != skipTargetKey) return
-        skipAction?.invoke()
+        val action = skipAction
+        // Instant-hide the native pill on tap, before the async seek lands.
+        // Without this the overlay stays up until the next refresh, and the
+        // re-registered Compose target can flash it back.
+        clearSkipTargetInternal()
+        action?.invoke()
     }
 
     private fun removeSkipOverlay() {
