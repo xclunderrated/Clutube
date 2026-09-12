@@ -288,6 +288,15 @@ class YouTubeViewModel : ViewModel() {
     // chance to recover. Cancelled by any playing snapshot or new title.
     private var backgroundPauseGraceJob: Job? = null
     private val prefetchedSeasonEpisodes = mutableMapOf<String, List<TmdbEpisodeItem>>()
+    /**
+     * Option-B Continue preload bookkeeping. Only the MRU Continue Watching
+     * key is ever preloaded ([warmContinueWatching]); [preloadedContinueKey]
+     * tracks which key the hidden WebView holds so taps can promote it
+     * without a reload. Cleared whenever real playback starts for a different
+     * key, the server/mirror changes, or the player is released.
+     */
+    private var continuePreloadJob: Job? = null
+    private var preloadedContinueKey: String? = null
     private val trailerViewsJobs = mutableMapOf<String, Job>()
     private var currentTrailerViewsJob: Job? = null
     private var skipSegmentsKey: String? = null
@@ -608,6 +617,8 @@ class YouTubeViewModel : ViewModel() {
                             }
                         )
                     }
+                    // Feed painted — idle-preload the MRU Continue title now.
+                    warmContinueWatching()
                 } else {
                     _uiState.update {
                         it.copy(
@@ -968,11 +979,13 @@ class YouTubeViewModel : ViewModel() {
         val updated = _uiState.value.watchHistory.filterNot { it.key == key }
         _uiState.update { it.copy(watchHistory = updated) }
         settingsManager?.removeWatchHistoryEntry(key)
+        if (key == preloadedContinueKey) invalidateContinuePreload()
     }
 
     fun clearWatchHistory() {
         _uiState.update { it.copy(watchHistory = emptyList()) }
         settingsManager?.clearWatchHistory()
+        invalidateContinuePreload()
     }
 
     fun setShowHistoryScreen(show: Boolean) {
@@ -1365,6 +1378,8 @@ class YouTubeViewModel : ViewModel() {
             .firstOrNull { it.id == serverId }
             ?.id
             ?: StreamService.DEFAULT_SERVER_ID
+        // Provider URL changes obsolete any hidden preload.
+        invalidateContinuePreload()
         if (remember) settingsManager?.selectedServerId = normalizedServerId
         lastLoadAtMillis = System.currentTimeMillis()
         _uiState.update { current ->
@@ -1465,6 +1480,10 @@ class YouTubeViewModel : ViewModel() {
             vidSrcHost = current.selectedVidSrcServerHost
         )
         val key = readyVideo.playbackKey()
+        // Opening playback supersedes any pending warmer; a same-key hidden
+        // preload is promoted (not reloaded) by ensureWebViewLoaded below.
+        continuePreloadJob?.cancel()
+        if (key != preloadedContinueKey) preloadedContinueKey = null
         val previousEntry = current.watchHistory.firstOrNull { it.key == key }
         val isResume = previousEntry != null && !previousEntry.completed &&
             previousEntry.positionSeconds > 0L && previousEntry.durationSeconds > 0L
@@ -1714,6 +1733,7 @@ class YouTubeViewModel : ViewModel() {
         resetAutomaticFailover()
         cancelAutoNextWatchdog()
         autoNextFiredKey = null
+        continuePreloadJob?.cancel()
         toggleReconcileJob?.cancel()
         toggleReconcileJob = null
         backgroundPauseGraceJob?.cancel()
@@ -1789,8 +1809,10 @@ class YouTubeViewModel : ViewModel() {
     private fun ensureWebViewLoaded(video: VideoItem, resumeSecs: Double, playWhenReady: Boolean) {
         val ctx = playbackContext ?: return
         try {
-            if (com.example.util.PlayerViewManager.activeMediaKey != video.playbackKey()) {
-                com.example.util.PlayerViewManager.loadMedia(
+            val manager = com.example.util.PlayerViewManager
+            val key = video.playbackKey()
+            if (manager.activeMediaKey != key) {
+                manager.loadMedia(
                     context = ctx,
                     video = video,
                     serverId = _uiState.value.selectedServerId,
@@ -1798,9 +1820,119 @@ class YouTubeViewModel : ViewModel() {
                     playWhenReady = playWhenReady,
                     vidSrcServerHost = _uiState.value.selectedVidSrcServerHost
                 )
+            } else if (manager.isSpeculativePreload && manager.speculativePreloadKey == key) {
+                // Promote the hidden Continue preload to audible playback.
+                // Same key+URL+server, so loadMedia unpauses without reload;
+                // a preload-time error forces a fresh load instead.
+                if (manager.hasPlayerError.value) {
+                    manager.loadMedia(
+                        context = ctx,
+                        video = video,
+                        serverId = _uiState.value.selectedServerId,
+                        resumePositionSeconds = resumeSecs,
+                        forceReload = true,
+                        playWhenReady = playWhenReady,
+                        vidSrcServerHost = _uiState.value.selectedVidSrcServerHost
+                    )
+                } else {
+                    manager.loadMedia(
+                        context = ctx,
+                        video = video,
+                        serverId = _uiState.value.selectedServerId,
+                        resumePositionSeconds = resumeSecs,
+                        playWhenReady = playWhenReady,
+                        vidSrcServerHost = _uiState.value.selectedVidSrcServerHost
+                    )
+                }
             }
         } catch (_: Exception) {
         }
+    }
+
+    /**
+     * Option-B hidden preload: after the feed paints, load the MRU Continue
+     * Watching movie / current S/E episode paused in the pooled WebView on
+     * WiFi only, so a tap promotes to playing without DNS/TLS/HTML/HLS wait.
+     * Also warms the TV episode-list cache for that season. Never evicts real
+     * playback; no-ops offline, metered, unreleased, or unresolvable titles.
+     */
+    fun warmContinueWatching() {
+        val ctx = playbackContext ?: return
+        val monitor = networkMonitor ?: return
+        if (_uiState.value.isOffline) return
+        if (!monitor.isUnmetered()) return
+        if (_uiState.value.currentPlayingVideo != null || _uiState.value.isPlayerExpanded) return
+        if (com.example.util.PlayerViewManager.activeMediaKey != null &&
+            !com.example.util.PlayerViewManager.isSpeculativePreload
+        ) return
+        val entry = _uiState.value.continueWatching.firstOrNull() ?: return
+        if (entry.completed) return
+        val key = entry.key
+        if (key == preloadedContinueKey &&
+            com.example.util.PlayerViewManager.activeMediaKey == key
+        ) return
+        if (com.example.util.PlayerViewManager.isSpeculativePreload &&
+            com.example.util.PlayerViewManager.speculativePreloadKey == key
+        ) {
+            preloadedContinueKey = key
+            return
+        }
+        continuePreloadJob?.cancel()
+        continuePreloadJob = viewModelScope.launch {
+            // Idle gate: let feed paint + settle before spending WiFi/data.
+            delay(2000L)
+            if (_uiState.value.currentPlayingVideo != null || _uiState.value.isPlayerExpanded) return@launch
+            if (_uiState.value.isOffline || !monitor.isUnmetered()) return@launch
+            if (com.example.util.PlayerViewManager.activeMediaKey != null &&
+                !com.example.util.PlayerViewManager.isSpeculativePreload
+            ) return@launch
+            val state = _uiState.value
+            if (state.videos.isEmpty() && state.continueWatching.isEmpty()) return@launch
+            val fresh = state.continueWatching.firstOrNull() ?: return@launch
+            if (fresh.completed) return@launch
+            if (fresh.key != key) {
+                // History moved while idling — restart for the new MRU.
+                preloadedContinueKey = null
+                warmContinueWatching()
+                return@launch
+            }
+            if (isUnreleased(fresh.video.releaseDateIso ?: fresh.video.releaseDateFormatted)) return@launch
+            val readyVideo = fresh.video.withStreamUrl(
+                serverId = state.selectedServerId,
+                vidSrcHost = state.selectedVidSrcServerHost
+            )
+            val probeUrl = com.example.data.StreamService.buildEmbedUrl(
+                mediaType = readyVideo.mediaType,
+                id = readyVideo.tmdbId ?: readyVideo.id,
+                season = readyVideo.currentSeason,
+                episode = readyVideo.currentEpisode,
+                serverId = state.selectedServerId,
+                vidSrcHost = state.selectedVidSrcServerHost
+            )
+            if (probeUrl.isBlank()) return@launch
+            // Episode rail for the preloaded season, so Watch opens complete.
+            fresh.video.tmdbId?.toIntOrNull()?.let { tvId ->
+                if (fresh.video.mediaType == MediaType.TV_SHOW) {
+                    fetchTvSeasonEpisodes(tvId, fresh.video.currentSeason)
+                }
+            }
+            com.example.util.PlayerViewManager.preloadContinueMedia(
+                context = ctx,
+                video = readyVideo,
+                serverId = state.selectedServerId,
+                resumePositionSeconds = fresh.resumePositionSeconds(),
+                vidSrcServerHost = state.selectedVidSrcServerHost
+            )
+            preloadedContinueKey = key
+        }
+    }
+
+    /** Drops a stale Continue preload (server/mirror change, new title). */
+    private fun invalidateContinuePreload() {
+        continuePreloadJob?.cancel()
+        continuePreloadJob = null
+        preloadedContinueKey = null
+        com.example.util.PlayerViewManager.clearSpeculativePreload()
     }
 
     fun toggleAutoNextEpisode() {
@@ -2792,6 +2924,9 @@ class YouTubeViewModel : ViewModel() {
                 currentTrailerVideoId = null
             )
         }
+        // Player released — preload the next MRU Continue title for instant resume.
+        preloadedContinueKey = null
+        warmContinueWatching()
     }
 
     fun retryCurrentPlayback() {
@@ -2857,6 +2992,8 @@ class YouTubeViewModel : ViewModel() {
         resetFailover: Boolean
     ) {
         if (!StreamService.isVidSrcServerHost(host)) return
+        // Mirror change obsoletes any hidden preload (different embed host).
+        invalidateContinuePreload()
         if (resetFailover) {
             vidSrcFailoverMediaKey = null
             vidSrcAttemptedServerHosts.clear()
@@ -2914,6 +3051,7 @@ class YouTubeViewModel : ViewModel() {
         // The first saved mirror is the preferred mirror for the next load.
         val preferred = normalized.firstOrNull() ?: StreamService.DEFAULT_VIDSRC_SERVER_HOST
         settingsManager?.selectedVidSrcServerId = preferred
+        invalidateContinuePreload()
         _uiState.update {
             it.copy(
                 vidSrcServerOrder = normalized,

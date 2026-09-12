@@ -62,10 +62,27 @@ object PlayerViewManager {
     private var pendingQuality = PlaybackQuality.AUTO.wireValue
     private var pendingSubtitles = SubtitlePreference.OFF.wireValue
     private var activeVidSrcServerHost = StreamService.DEFAULT_VIDSRC_SERVER_HOST
+    /**
+     * Option-B Continue preload: a hidden background `loadUrl` for the MRU
+     * Continue Watching title (movie or current S/E episode) issued on WiFi
+     * while idle. The page loads paused at the resume point; tapping the card
+     * promotes it to playing without a reload. Null when no preload is live.
+     * Never set while real playback (`currentPlayingVideo`) is active — the
+     * warmer checks before calling, and any real `loadMedia` for a different
+     * key replaces the preload.
+     */
+    var speculativePreloadKey: String? = null
+        private set
+    var isSpeculativePreload: Boolean = false
+        private set
     private var reportedPageErrorGeneration = -1L
     private var loadingMaskJob: Job? = null
     private var loadWatchdogJob: Job? = null
     private var hasUsablePlaybackSignal = false
+    // Highest position seen from VidLink snapshots this generation. If the
+    // position advances, frames are rendering even when the provider's
+    // playing flag is stuck — that also arms the watchdog (see bridge).
+    private var lastVidLinkProgressPosition = Double.NaN
     private var miniPlayerMode = false
     private var audioFocusRequest: AudioFocusRequest? = null
     private var legacyAudioFocusHeld = false
@@ -307,10 +324,27 @@ object PlayerViewManager {
             if (durationSeconds > 0.0 || positionSeconds > 0.0) {
                 dispatchGenerationState(generation) {
                     if (activeServerId == StreamService.VIDLINK_SERVER_ID) {
-                        // VidLink can report metadata before its first frame
-                        // is available. Its custom veil should remain until
-                        // PlaybackScript confirms a playable video element.
-                        if (hasUsablePlaybackSignal) setLoading(false)
+                        // A playing snapshot with real duration proves frames
+                        // are rendering, so it arms the watchdog like Ready.
+                        // Advancing position counts too: it proves playback
+                        // even when the provider's playing flag is stuck.
+                        // Metadata-only or paused snapshots still don't arm:
+                        // VidLink reports those before its first frame, and
+                        // the custom veil stays up until then.
+                        val positionAdvanced = !lastVidLinkProgressPosition.isNaN() &&
+                            positionSeconds > lastVidLinkProgressPosition + 1.5
+                        if (positionSeconds.isFinite()) {
+                            lastVidLinkProgressPosition = positionSeconds
+                        }
+                        if ((isPlaying && durationSeconds > 0.0) || positionAdvanced) {
+                            hasUsablePlaybackSignal = true
+                            loadWatchdogJob?.cancel()
+                            loadWatchdogJob = null
+                            setLoading(false)
+                            setError(false)
+                        } else if (hasUsablePlaybackSignal) {
+                            setLoading(false)
+                        }
                     } else {
                         hasUsablePlaybackSignal = true
                         setLoading(false)
@@ -600,6 +634,8 @@ object PlayerViewManager {
                         activeMediaKey = null
                         currentStreamUrl = null
                         activeServerId = null
+                        isSpeculativePreload = false
+                        speculativePreloadKey = null
                         loadingMaskJob?.cancel()
                         loadingMaskJob = null
                         loadWatchdogJob?.cancel()
@@ -634,7 +670,8 @@ object PlayerViewManager {
         resumePositionSeconds: Double = 0.0,
         forceReload: Boolean = false,
         playWhenReady: Boolean = true,
-        vidSrcServerHost: String? = null
+        vidSrcServerHost: String? = null,
+        isSpeculative: Boolean = false
     ) {
         val webView = getOrCreateWebView(context)
         val targetKey = video.playbackKey()
@@ -661,7 +698,29 @@ object PlayerViewManager {
             currentStreamUrl != targetUrl ||
             activeServerId != serverId ||
             forceReload
-        if (!shouldLoad) return
+        if (!shouldLoad) {
+            // Promotion: a hidden Continue preload for this exact key is now
+            // a real tap. The page is already at the resume point paused —
+            // just unpause instead of reloading from 0:00.
+            if (!isSpeculative && isSpeculativePreload && speculativePreloadKey == targetKey &&
+                activeMediaKey == targetKey && !hasPlayerError.value
+            ) {
+                isSpeculativePreload = false
+                speculativePreloadKey = null
+                setError(false)
+                requestPlaybackAudioFocus(webView.context)
+                pendingPlayWhenReady = playWhenReady
+                if (playWhenReady) {
+                    play()
+                }
+            }
+            return
+        }
+        // A real load for a different title replaces any live preload.
+        if (!isSpeculative) {
+            isSpeculativePreload = false
+            speculativePreloadKey = null
+        }
 
         activeMediaKey = targetKey
         currentStreamUrl = targetUrl
@@ -672,20 +731,41 @@ object PlayerViewManager {
         // assigned first so the error below reaches the ViewModel event path.
         // Surface a fast error instead of a blank player + 18s watchdog.
         if (targetUrl.isBlank()) {
+            if (isSpeculative) {
+                // Stale preload, not a user-visible error: drop state so a
+                // later real tap surfaces the fast error path above.
+                isSpeculativePreload = false
+                speculativePreloadKey = null
+                activeMediaKey = null
+                currentStreamUrl = null
+                activeServerId = null
+                setLoading(false)
+                return
+            }
             hidePlayerUiInternal()
             setLoading(false)
             reportPageError("This title can't be played: missing provider id")
             return
         }
-        requestPlaybackAudioFocus(webView.context)
+        // Speculative preloads never take audio focus, wake locks, or audible
+        // autoplay: the page loads paused at the resume point.
+        if (!isSpeculative) {
+            requestPlaybackAudioFocus(webView.context)
+        }
         pendingResumePositionSeconds = resumePositionSeconds.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
-        pendingPlayWhenReady = playWhenReady
-        lastKnownIsPlaying = playWhenReady
+        pendingPlayWhenReady = if (isSpeculative) false else playWhenReady
+        lastKnownIsPlaying = if (isSpeculative) false else playWhenReady
+        if (isSpeculative) {
+            isSpeculativePreload = true
+            speculativePreloadKey = targetKey
+            setUserPausedFlag(true)
+        }
         updateBackgroundWakeLock()
         loadGeneration += 1L
         val generation = loadGeneration
         reportedPageErrorGeneration = -1L
         hasUsablePlaybackSignal = false
+        lastVidLinkProgressPosition = Double.NaN
         lastSnapshotEmitMillis = 0L
         lastSnapshotPosition = Double.NaN
         lastSnapshotPlaying = null
@@ -701,10 +781,12 @@ object PlayerViewManager {
             _isCleanOverlayLoading.value = false
         }
         loadWatchdogJob = mainScope.launch {
-            // Fail fast so server failover fires before the user gives up:
-            // VidLink 8s, VidSrc 10s (was 15s/18s). Provider HLS usually
-            // signals within 3-5s on a healthy mirror.
-            delay(if (serverId == StreamService.VIDLINK_SERVER_ID) 8000L else 10000L)
+            // Failover must never kill a slow-but-healthy load: providers
+            // routinely need 6-12s on real networks (HLS manifest + first
+            // segment), so VidLink gets 15s and VidSrc 18s. A premature
+            // timeout reloads a half-started player from 0:00 (looks like
+            // "paused at 0:00") or flips a working VidLink load to VidSrc.
+            delay(if (serverId == StreamService.VIDLINK_SERVER_ID) 15000L else 18000L)
             if (generation == loadGeneration &&
                 activeServerId == serverId &&
                 !hasUsablePlaybackSignal
@@ -1067,6 +1149,53 @@ object PlayerViewManager {
         }
     }
 
+    /**
+     * Option-B hidden preload for the MRU Continue Watching title. Loads the
+     * provider embed paused at [resumePositionSeconds] without audio focus or
+     * wake lock. Must run on the main thread (WebView) — posts internally so
+     * callers can invoke from any dispatcher. No-op when real playback is
+     * active; the warmer guards that, and a second guard lives here so a race
+     * with a fresh tap can never evict audible playback.
+     */
+    fun preloadContinueMedia(
+        context: Context,
+        video: VideoItem,
+        serverId: String,
+        resumePositionSeconds: Double = 0.0,
+        vidSrcServerHost: String? = null
+    ) {
+        mainHandler.post {
+            // Never evict audible playback for a speculative load.
+            if (activeMediaKey != null && !isSpeculativePreload) return@post
+            val targetKey = video.playbackKey()
+            if (isSpeculativePreload && speculativePreloadKey == targetKey) return@post
+            runCatching {
+                loadMedia(
+                    context = context.applicationContext,
+                    video = video,
+                    serverId = serverId,
+                    resumePositionSeconds = resumePositionSeconds,
+                    forceReload = false,
+                    playWhenReady = false,
+                    vidSrcServerHost = vidSrcServerHost,
+                    isSpeculative = true
+                )
+            }
+            Log.d(TAG, "Speculative Continue preload issued for $targetKey")
+        }
+    }
+
+    /**
+     * Drops a stale preload without destroying the pooled WebView. Called when
+     * history/server changes make the preloaded key obsolete, or when a
+     * speculative load errored and a real tap must force a fresh reload.
+     */
+    fun clearSpeculativePreload() {
+        if (!isSpeculativePreload && speculativePreloadKey == null) return
+        isSpeculativePreload = false
+        speculativePreloadKey = null
+    }
+
     fun requestPlaybackSnapshot(onComplete: (() -> Unit)? = null) {
         val webView = persistentWebView
         if (webView == null) {
@@ -1150,12 +1279,15 @@ object PlayerViewManager {
         activeMediaKey = null
         currentStreamUrl = null
         activeServerId = null
+        isSpeculativePreload = false
+        speculativePreloadKey = null
         activeVidSrcServerHost = StreamService.DEFAULT_VIDSRC_SERVER_HOST
         pendingResumePositionSeconds = 0.0
         pendingPlayWhenReady = true
         pendingQuality = PlaybackQuality.AUTO.wireValue
         pendingSubtitles = SubtitlePreference.OFF.wireValue
         hasUsablePlaybackSignal = false
+        lastVidLinkProgressPosition = Double.NaN
         miniPlayerMode = false
         setLoading(false)
         setError(false)

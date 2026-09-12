@@ -42,6 +42,19 @@ class NetworkMonitor(context: Context) {
         runCatching { connectivityManager.unregisterNetworkCallback(callback) }
     }
 
+    /**
+     * True when the active network is validated AND unmetered (typically WiFi).
+     * Used to gate speculative work like Continue Watching player preloads so
+     * background loads never burn mobile data.
+     */
+    fun isUnmetered(): Boolean {
+        val network = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+    }
+
     private fun currentlyOnline(): Boolean {
         val network = connectivityManager.activeNetwork ?: return false
         val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
