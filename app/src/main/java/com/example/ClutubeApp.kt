@@ -30,11 +30,17 @@ class ClutubeApp : Application(), ImageLoaderFactory {
                 android.webkit.WebView.getCurrentWebViewPackage()
             } catch (_: Exception) {}
             try {
-                // DNS prefetch for both embed providers.
+                // DNS prefetch for embed providers.
                 java.net.InetAddress.getByName("vidsrc2.ru")
             } catch (_: Exception) {}
             try {
                 java.net.InetAddress.getByName("vidlink.pro")
+            } catch (_: Exception) {}
+            try {
+                java.net.InetAddress.getByName("vidfast.pro")
+            } catch (_: Exception) {}
+            try {
+                java.net.InetAddress.getByName("vidsrc.to")
             } catch (_: Exception) {}
             try {
                 com.example.util.PlayerViewManager.prewarm(this)

@@ -143,6 +143,19 @@ fun StreamServerDialog(
                     onDismiss()
                 }
             )
+            Spacer(modifier = Modifier.height(8.dp))
+            StreamProviderRow(
+                title = "VidFast",
+                subtitle = "Fast multi-server stream",
+                selected = currentServerId == StreamService.VIDFAST_SERVER_ID,
+                accent = MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.PlayArrow,
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onSelectServer(StreamService.VIDFAST_SERVER_ID)
+                    onDismiss()
+                }
+            )
 
             if (currentServerId == StreamService.VIDSRC_SERVER_ID) {
                 Spacer(modifier = Modifier.height(12.dp))

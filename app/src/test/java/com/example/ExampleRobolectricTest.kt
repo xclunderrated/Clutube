@@ -28,9 +28,13 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `only VidSrc and VidLink Pro are exposed as providers`() {
+    fun `VidSrc, VidLink Pro and VidFast are exposed as providers`() {
         assertEquals(
-            listOf(StreamService.VIDSRC_SERVER_ID, StreamService.VIDLINK_SERVER_ID),
+            listOf(
+                StreamService.VIDSRC_SERVER_ID,
+                StreamService.VIDLINK_SERVER_ID,
+                StreamService.VIDFAST_SERVER_ID
+            ),
             StreamService.AVAILABLE_SERVERS.map { it.id }
         )
         assertEquals(StreamService.VIDSRC_SERVER_ID, StreamService.DEFAULT_SERVER_ID)
@@ -50,7 +54,10 @@ class ExampleRobolectricTest {
                 "vidsrc-me.su",
                 "vidsrc-embed.ru",
                 "vidsrc-embed.su",
-                "vsrc.su"
+                "vsrc.su",
+                "vidsrc.pm",
+                "vidsrc.to",
+                "vidsrc.cc"
             ),
             StreamService.VIDSRC_SERVER_HOSTS
         )
@@ -81,6 +88,49 @@ class ExampleRobolectricTest {
             vidSrcHost = "vsrc.su"
         )
         assertEquals("https://vsrc.su/embed/tv/66732/4/9?autoplay=1", tvUrl)
+    }
+
+    @Test
+    fun `VidSrc v2 mirrors use the versioned embed path`() {
+        assertEquals("/v2/embed", StreamService.vidSrcEmbedPrefix("vidsrc.cc"))
+        assertEquals("/embed", StreamService.vidSrcEmbedPrefix("vidsrc.to"))
+
+        val movieUrl = StreamService.buildEmbedUrl(
+            mediaType = MediaType.MOVIE,
+            id = "693134",
+            serverId = StreamService.VIDSRC_SERVER_ID,
+            vidSrcHost = "vidsrc.cc"
+        )
+        assertEquals("https://vidsrc.cc/v2/embed/movie/693134?autoplay=1", movieUrl)
+
+        val tvUrl = StreamService.buildEmbedUrl(
+            mediaType = MediaType.TV_SHOW,
+            id = "66732",
+            season = 4,
+            episode = 9,
+            serverId = StreamService.VIDSRC_SERVER_ID,
+            vidSrcHost = "vidsrc.to"
+        )
+        assertEquals("https://vidsrc.to/embed/tv/66732/4/9?autoplay=1", tvUrl)
+    }
+
+    @Test
+    fun `VidFast embed urls use the VidFast path shape`() {
+        val movieUrl = StreamService.buildEmbedUrl(
+            mediaType = MediaType.MOVIE,
+            id = "693134",
+            serverId = StreamService.VIDFAST_SERVER_ID
+        )
+        assertEquals("https://vidfast.pro/movie/693134?autoPlay=true", movieUrl)
+
+        val tvUrl = StreamService.buildEmbedUrl(
+            mediaType = MediaType.TV_SHOW,
+            id = "66732",
+            season = 4,
+            episode = 9,
+            serverId = StreamService.VIDFAST_SERVER_ID
+        )
+        assertEquals("https://vidfast.pro/tv/66732/4/9?autoPlay=true", tvUrl)
     }
 
     @Test
@@ -140,14 +190,18 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `provider failover switches between VidSrc and VidLink Pro`() {
+    fun `provider failover walks VidSrc, VidLink Pro and VidFast in order`() {
         assertEquals(
-            listOf(StreamService.VIDLINK_SERVER_ID),
+            listOf(StreamService.VIDLINK_SERVER_ID, StreamService.VIDFAST_SERVER_ID),
             StreamService.fallbackServerIds(StreamService.VIDSRC_SERVER_ID)
         )
         assertEquals(
-            listOf(StreamService.VIDSRC_SERVER_ID),
+            listOf(StreamService.VIDSRC_SERVER_ID, StreamService.VIDFAST_SERVER_ID),
             StreamService.fallbackServerIds(StreamService.VIDLINK_SERVER_ID)
+        )
+        assertEquals(
+            listOf(StreamService.VIDSRC_SERVER_ID, StreamService.VIDLINK_SERVER_ID),
+            StreamService.fallbackServerIds(StreamService.VIDFAST_SERVER_ID)
         )
     }
 

@@ -113,11 +113,18 @@ object ServerProbeService {
                 } else {
                     "https://vidlink.pro/movie/${video.tmdbId ?: video.id}"
                 }
-            } else {
+            } else if (host.contains("vidfast.pro")) {
                 if (seasonNumber != null && episodeNumber != null) {
-                    "https://$host/embed/tv/${video.tmdbId ?: video.id}/$seasonNumber/$episodeNumber"
+                    "https://vidfast.pro/tv/${video.tmdbId ?: video.id}/$seasonNumber/$episodeNumber"
                 } else {
-                    "https://$host/embed/movie/${video.tmdbId ?: video.id}"
+                    "https://vidfast.pro/movie/${video.tmdbId ?: video.id}"
+                }
+            } else {
+                val prefix = StreamService.vidSrcEmbedPrefix(host)
+                if (seasonNumber != null && episodeNumber != null) {
+                    "https://$host$prefix/tv/${video.tmdbId ?: video.id}/$seasonNumber/$episodeNumber"
+                } else {
+                    "https://$host$prefix/movie/${video.tmdbId ?: video.id}"
                 }
             }
 

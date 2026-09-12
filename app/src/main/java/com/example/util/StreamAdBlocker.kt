@@ -12,7 +12,7 @@ import java.io.ByteArrayInputStream
  */
 object StreamAdBlocker {
 
-    // Only the configured VidSrc mirrors, VidLink Pro, and player/media infrastructure.
+    // Only the configured VidSrc mirrors, VidLink Pro, VidFast, and player/media infrastructure.
     private val ALLOWED_STREAM_DOMAINS = setOf(
         "vidsrc2.ru",
         "vidsrc.ir",
@@ -24,6 +24,10 @@ object StreamAdBlocker {
         "vidsrc-embed.su",
         "vsrc.su",
         "vsembed.ru",
+        "vidsrc.pm",
+        "vidsrc.to",
+        "vidsrc.cc",
+        "vidfast.pro",
         "data.vidsrcme.ru",
         "cloudorchestranova.com",
         "vidlink.pro",
