@@ -15,10 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -67,7 +63,6 @@ import com.example.ui.components.AmbientLightBackdrop
 import com.example.ui.components.CompactRelatedVideoCard
 import com.example.ui.components.CompactRelatedVideoCardSkeleton
 import com.example.ui.components.StopTrailerPreviewOnColumnScroll
-import com.example.ui.components.StopTrailerPreviewOnGridScroll
 import com.example.ui.components.StopTrailerPreviewOnListScroll
 import com.example.ui.components.VideoCard
 import com.example.ui.components.VideoCardSkeleton
@@ -228,7 +223,7 @@ fun WatchScreen(
             com.example.ui.components.TrailerPreviewSession.deactivate()
         }
         // Hoisted (unconditional) so rotation doesn't reorder remembers.
-        val relatedGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+        val relatedTabletPaneListState = androidx.compose.foundation.lazy.rememberLazyListState()
         val relatedListState = androidx.compose.foundation.lazy.rememberLazyListState()
         val onPlayNext: (() -> Unit)? = when {
             video.mediaType == MediaType.TV_SHOW && (nextEpisode != null || nextSeason != null) ->
@@ -240,7 +235,10 @@ fun WatchScreen(
         Column(modifier = Modifier.fillMaxSize()) {
             if (showTabletRightPane) {
                 // Tablet Landscape 2-Pane Split Layout
-                // Left pane takes 73% (large cinematic player + details), Right pane is reduced to 27% (compact sidebar)
+                // Left pane is cinematic (player + details), right pane is a
+                // narrower single-column sidebar (YouTube-like). Weights must
+                // sum to 1.0 — 0.73 + 0.36 previously over-constrained the Row
+                // and squeezed the sidebar.
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
@@ -251,7 +249,7 @@ fun WatchScreen(
                     StopTrailerPreviewOnColumnScroll(leftScrollState)
                     Column(
                         modifier = Modifier
-                            .weight(0.73f)
+                            .weight(0.72f)
                             .fillMaxHeight()
                             .verticalScroll(leftScrollState)
                     ) {
@@ -345,23 +343,22 @@ fun WatchScreen(
                             .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                     )
 
-                    // Right Pane: two-card related grid for tablet-sized screens.
-                    StopTrailerPreviewOnGridScroll(relatedGridState)
-                    LazyVerticalGrid(
-                        state = relatedGridState,
-                        columns = GridCells.Fixed(2),
+                    // Right Pane: single compact column. A Fixed(2) grid of
+                    // CompactRelatedVideoCard in a ~28% pane squeezed thumbs
+                    // and wrapped text — one card per row matches YouTube.
+                    StopTrailerPreviewOnListScroll(relatedTabletPaneListState)
+                    LazyColumn(
+                        state = relatedTabletPaneListState,
                         modifier = Modifier
-                            .weight(0.36f)
+                            .weight(0.28f)
                             .fillMaxHeight()
-                            .padding(horizontal = 6.dp)
+                            .padding(horizontal = 8.dp)
                             .testTag("watch_related_videos_list"),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         item(
                             key = "tablet_right_header",
-                            contentType = "header",
-                            span = { GridItemSpan(2) }
+                            contentType = "header"
                         ) {
                             Row(
                                 modifier = Modifier
@@ -429,8 +426,7 @@ fun WatchScreen(
                                 val onNotRec = remember(relatedVideo.id, onNotRecommendChannel) {
                                     { onNotRecommendChannel(relatedVideo) }
                                 }
-                                // Compact in narrow 27% pane: ~60% cheaper than
-                                // full VideoCard (132dp thumb vs full-width).
+                                // Full-width compact row in the narrow sidebar.
                                 CompactRelatedVideoCard(
                                     video = relatedVideo,
                                     onClick = onClick,
@@ -443,12 +439,13 @@ fun WatchScreen(
                                     onNotInterested = onNotInt,
                                     onNotRecommendChannel = onNotRec,
                                     modifier = Modifier
+                                        .fillMaxWidth()
                                         .padding(bottom = 4.dp)
                                 )
                             }
                         } else if (isRelatedLoading) {
                             items(
-                                count = 4,
+                                count = 6,
                                 key = { "tab_rel_skel_$it" },
                                 contentType = { "related_skeleton" }
                             ) {
@@ -457,8 +454,7 @@ fun WatchScreen(
                         } else {
                             item(
                                 key = "tab_rel_error",
-                                contentType = "related_error",
-                                span = { GridItemSpan(2) }
+                                contentType = "related_error"
                             ) {
                                 RelatedErrorRow(
                                     message = relatedErrorMessage,
@@ -887,6 +883,14 @@ private fun PlayerSurfaceWithUpNext(
             activeSkipSegment != null &&
             !hasNativeFullscreen
         val latestOnSkip by rememberUpdatedState(onSkipSegment)
+        // Instant tap handling: clear the native fullscreen pill on the same
+        // frame as the touch, before the ViewModel StateFlow round-trip.
+        // ViewModel.onSkipSegment also clears + marks dismissed, so this is
+        // idempotent and covers both inline and native fullscreen pills.
+        val instantOnSkip: (SkipSegment) -> Unit = { segment ->
+            FullscreenHelper.clearSkipTarget()
+            latestOnSkip(segment)
+        }
 
         DisposableEffect(video.playbackKey(), activeSkipSegment, isSkipSegmentsEnabled) {
             val segment = activeSkipSegment
@@ -895,7 +899,7 @@ private fun PlayerSurfaceWithUpNext(
                     key = video.playbackKey() + "|" + segment.type.name + "|" + segment.startSec + "|" + segment.endSec,
                     label = segment.label(),
                     isNextEpisode = segment.isNextEpisodeStyle,
-                    onSkip = { latestOnSkip(segment) }
+                    onSkip = { instantOnSkip(segment) }
                 )
             } else {
                 FullscreenHelper.clearSkipTarget()
@@ -906,10 +910,15 @@ private fun PlayerSurfaceWithUpNext(
         }
 
         SideEffect {
-            currentPlaybackSnapshot?.let { snapshot ->
-                FullscreenHelper.updateSkipPlayback(
-                    positionSeconds = snapshot.positionSeconds
-                )
+            // Don't feed stale positions after the pill was dismissed: that
+            // re-arms refreshSkipOverlay() and can flash the native pill back
+            // during the ~1-2s seek round-trip.
+            if (activeSkipSegment != null) {
+                currentPlaybackSnapshot?.let { snapshot ->
+                    FullscreenHelper.updateSkipPlayback(
+                        positionSeconds = snapshot.positionSeconds
+                    )
+                }
             }
         }
 
@@ -917,7 +926,7 @@ private fun PlayerSurfaceWithUpNext(
             SkipSegmentButton(
                 segment = activeSkipSegment,
                 visible = showSkipButton,
-                onSkip = { latestOnSkip(it) },
+                onSkip = { instantOnSkip(it) },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 16.dp, bottom = 96.dp)
