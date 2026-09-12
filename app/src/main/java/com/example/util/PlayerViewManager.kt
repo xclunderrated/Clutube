@@ -846,10 +846,10 @@ object PlayerViewManager {
             }
         }
         // Autoplay backstop (see field): fresh real loads that asked to play
-        // must not sit paused behind a provider Resume gate. Two bounded
-        // nudges at ~4s/~9s; each is a no-op once frames are moving, after
-        // an explicit pause, or after an error. Speculative preloads stay
-        // paused by design.
+        // must not sit paused behind a provider Resume gate. Three bounded
+        // nudges at ~4s/~9s/~15s; each is a no-op once frames are moving,
+        // after an explicit pause, or after an error. Speculative preloads
+        // stay paused by design.
         if (!isSpeculative && playWhenReady) {
             armAutoplayWatchdog(generation)
         }
@@ -884,7 +884,7 @@ object PlayerViewManager {
     }
 
     /**
-     * Arms the autoplay backstop for [generation]: two bounded nudges while a
+     * Arms the autoplay backstop for [generation]: three bounded nudges while a
      * load that asked to play is still paused with no explicit pause or
      * error. Each nudge re-asserts play into every frame and clicks the
      * provider's landing/resume gates. Self-cancels on the next load.
@@ -892,8 +892,8 @@ object PlayerViewManager {
     private fun armAutoplayWatchdog(generation: Long) {
         autoplayWatchdogJob?.cancel()
         autoplayWatchdogJob = mainScope.launch {
-            repeat(2) { attempt ->
-                delay(if (attempt == 0) 4000L else 5000L)
+            repeat(3) { attempt ->
+                delay(if (attempt == 0) 4000L else if (attempt == 1) 5000L else 6000L)
                 if (generation != loadGeneration) return@launch
                 if (_hasPlayerError.value) return@launch
                 if (!pendingPlayWhenReady) return@launch

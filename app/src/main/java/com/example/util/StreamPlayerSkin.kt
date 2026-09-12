@@ -388,8 +388,19 @@ internal object StreamPlayerSkin {
     // The provider can park a "Resume from …" / "Continue watching" overlay
     // on the landing page even after start (per-episode localStorage). That
     // is the tap the user currently does by hand — auto-confirm it so the
-    // episode starts immediately on open.
+    // episode starts immediately on open. Runs until nested playback is
+    // confirmed (not just until bigPlay clicks): the gate can appear AFTER
+    // playback starts, which is the play-then-pause symptom.
     var lastResumeClickAt = 0;
+    var playingConfirmed = false;
+    function labelIsResume(label) {
+        if (/resume/i.test(label)) return true;
+        // "Continue" alone is too generic (nav buttons) — require a resume
+        // context: a timestamp ("Continue from 12:34"), watching, episode.
+        if (/continue/i.test(label) &&
+            (/watching|episode|play|\d+\s*:\s*\d+/.test(label))) return true;
+        return false;
+    }
     function clickResumeOverlay() {
         var config = window.CFG || window.CONFIG || {};
         if (config.autoplay === false || config.autoplay === 0 || String(config.autoplay) === '0') return;
@@ -404,7 +415,7 @@ internal object StreamPlayerSkin {
                 var rel = resumeCandidates[j];
                 if (!rel || rel.offsetParent === null) continue;
                 var rlabel = (rel.innerText || rel.textContent || rel.getAttribute('aria-label') || '');
-                if (/resume|continue\s*watching/i.test(rlabel)) {
+                if (labelIsResume(rlabel)) {
                     resumeBtn = rel;
                     break;
                 }
@@ -416,6 +427,31 @@ internal object StreamPlayerSkin {
         }
     }
 
+    // The nested player reports PLAYER_EVENT snapshots to this page (same
+    // shape the outer bridge consumes). Stop sweeping once playback is
+    // genuinely underway instead of after a fixed 10s cliff.
+    function autostartMessageListener(event) {
+        try {
+            var payload = event && event.data;
+            if (typeof payload === 'string') {
+                try { payload = JSON.parse(payload); } catch (_) { return; }
+            }
+            if (!payload || payload.type !== 'PLAYER_EVENT' || !payload.data) return;
+            var data = payload.data;
+            var rawStatus = String(data.player_status || data.event || '').toLowerCase();
+            var pos = Number(
+                data.player_progress !== undefined ? data.player_progress : data.currentTime
+            );
+            if ((rawStatus === 'playing' || rawStatus === 'play' || rawStatus === 'timeupdate') &&
+                isFinite(pos) && pos > 5) {
+                playingConfirmed = true;
+                if (timer) clearInterval(timer);
+                try { window.removeEventListener('message', autostartMessageListener); } catch (_) {}
+            }
+        } catch (_) {}
+    }
+    try { window.addEventListener('message', autostartMessageListener); } catch (_) {}
+
     startLandingPlayer();
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', startLandingPlayer, { once: true });
@@ -425,8 +461,9 @@ internal object StreamPlayerSkin {
     var timer = setInterval(function () {
         attempts++;
         clickResumeOverlay();
-        if (startLandingPlayer() || attempts > 40) clearInterval(timer);
-    }, 250);
+        startLandingPlayer();
+        if (playingConfirmed || attempts > 120) clearInterval(timer);
+    }, 500);
 })();
 </script>
 """
@@ -491,13 +528,42 @@ internal object StreamPlayerSkin {
     }
 
     // Nested-frame twin of the landing resume sweep: the real player can
-    // hold a paused "Resume" gate in front of an otherwise-ready video.
-    // Throttled to one click/sec; text match only.
+    // hold a paused "Resume" gate in front of an otherwise-ready video —
+    // including AFTER a successful start (play-then-pause). Independent of
+    // the one-shot `started` flag: clicks only while a video is paused, and
+    // retires once playback is solidly underway. Throttled to one click/sec.
     var lastNestedResumeClickAt = 0;
+    var nestedResumeDone = false;
+    function nestedResumeLabelOk(label) {
+        if (/resume/i.test(label)) return true;
+        if (/continue/i.test(label) &&
+            (/watching|episode|play|\d+\s*:\s*\d+/.test(label))) return true;
+        return false;
+    }
     function clickResumeOverlay() {
+        if (nestedResumeDone) return;
         var now = Date.now();
         if (now - lastNestedResumeClickAt < 1000) return;
         try {
+            var videos = document.querySelectorAll('video');
+            var pausedVideo = null;
+            var solidPlaying = false;
+            for (var v = 0; v < videos.length; v++) {
+                try {
+                    if (!videos[v].paused) {
+                        if (videos[v].currentTime > 5) solidPlaying = true;
+                    } else {
+                        pausedVideo = videos[v];
+                    }
+                } catch (_) {}
+            }
+            if (solidPlaying && !pausedVideo) {
+                nestedResumeDone = true;
+                return;
+            }
+            // Only a paused gate is worth clicking through; never disturb
+            // active playback.
+            if (!pausedVideo) return;
             var candidates = document.querySelectorAll(
                 'button, [role="button"], [data-action="resume"], [data-action="continue"]'
             );
@@ -505,7 +571,7 @@ internal object StreamPlayerSkin {
                 var el = candidates[i];
                 if (!el || el.offsetParent === null) continue;
                 var label = (el.innerText || el.textContent || el.getAttribute('aria-label') || '');
-                if (/resume|continue\s*watching/i.test(label)) {
+                if (nestedResumeLabelOk(label)) {
                     lastNestedResumeClickAt = now;
                     try { el.click(); } catch (_) {}
                     return;
@@ -519,8 +585,20 @@ internal object StreamPlayerSkin {
     var timer = setInterval(function () {
         attempts++;
         clickLandingPlay();
+        // The start timer still retires on success/timeout, but the resume
+        // sweep above is self-retiring (nestedResumeDone) and keeps covering
+        // late gates for up to ~60s.
         if (started || attempts > 30) clearInterval(timer);
     }, 500);
+    var resumeTimer = setInterval(function () {
+        clickResumeOverlay();
+        if (nestedResumeDone) clearInterval(resumeTimer);
+    }, 1000);
+    // Hard stop for the resume sweep so no interval lives past ~75s.
+    setTimeout(function () {
+        try { clearInterval(resumeTimer); } catch (_) {}
+        nestedResumeDone = true;
+    }, 75000);
     ['loadedmetadata', 'canplay', 'playing'].forEach(function (eventName) {
         document.addEventListener(eventName, startVideo, true);
     });
