@@ -190,7 +190,7 @@ internal object StreamPlayerSkin {
             if (connection.responseCode !in 200..299) return null
 
             val upstreamJs = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val combinedJs = upstreamJs + "\n\n" + TOP_ACTIONS_RUNTIME + AUTOPLAY_RUNTIME + PLAYER_COMMAND_RUNTIME + PLAYER_PREFERENCE_RUNTIME + PLAYER_UI_RUNTIME + PLAYER_SNAPSHOT_RUNTIME
+            val combinedJs = upstreamJs + "\n\n" + TOP_ACTIONS_RUNTIME + AUTOPLAY_RUNTIME + PLAYER_NO_AUTO_NEXT_RUNTIME + PLAYER_COMMAND_RUNTIME + PLAYER_PREFERENCE_RUNTIME + PLAYER_UI_RUNTIME + PLAYER_SNAPSHOT_RUNTIME
             putCachedAsset(requestUrl, combinedJs.toByteArray(Charsets.UTF_8))
             WebResourceResponse(
                 "application/javascript",
@@ -359,10 +359,61 @@ internal object StreamPlayerSkin {
         // invoke the same landing action automatically from this page.
         config.autoStart = true;
         var button = document.getElementById('bigPlay');
+        if (!button) button = findStartButton();
         if (!button) return false;
         triggered = true;
         button.click();
         return true;
+    }
+
+    // Fallback when the provider renames #bigPlay: any visible button whose
+    // label reads like play / resume / continue. Text match only — never
+    // touches settings, captions, or close controls.
+    function findStartButton() {
+        try {
+            var candidates = document.querySelectorAll(
+                'button, [role="button"], .bigplay, .big-play, [data-action="play"], [data-action="resume"]'
+            );
+            var startPattern = /^\s*(play|resume|continue)(\s|…|\.\.\.|$)/i;
+            for (var i = 0; i < candidates.length; i++) {
+                var el = candidates[i];
+                if (!el || el.offsetParent === null) continue;
+                var label = (el.innerText || el.textContent || el.getAttribute('aria-label') || '');
+                if (startPattern.test(label)) return el;
+            }
+        } catch (_) {}
+        return null;
+    }
+
+    // The provider can park a "Resume from …" / "Continue watching" overlay
+    // on the landing page even after start (per-episode localStorage). That
+    // is the tap the user currently does by hand — auto-confirm it so the
+    // episode starts immediately on open.
+    var lastResumeClickAt = 0;
+    function clickResumeOverlay() {
+        var config = window.CFG || window.CONFIG || {};
+        if (config.autoplay === false || config.autoplay === 0 || String(config.autoplay) === '0') return;
+        var now = Date.now();
+        if (now - lastResumeClickAt < 1000) return;
+        var resumeBtn = null;
+        try {
+            var resumeCandidates = document.querySelectorAll(
+                'button, [role="button"], [data-action="resume"], [data-action="continue"]'
+            );
+            for (var j = 0; j < resumeCandidates.length; j++) {
+                var rel = resumeCandidates[j];
+                if (!rel || rel.offsetParent === null) continue;
+                var rlabel = (rel.innerText || rel.textContent || rel.getAttribute('aria-label') || '');
+                if (/resume|continue\s*watching/i.test(rlabel)) {
+                    resumeBtn = rel;
+                    break;
+                }
+            }
+        } catch (_) {}
+        if (resumeBtn) {
+            lastResumeClickAt = now;
+            try { resumeBtn.click(); } catch (_) {}
+        }
     }
 
     startLandingPlayer();
@@ -373,7 +424,8 @@ internal object StreamPlayerSkin {
     }
     var timer = setInterval(function () {
         attempts++;
-        if (startLandingPlayer() || attempts > 30) clearInterval(timer);
+        clickResumeOverlay();
+        if (startLandingPlayer() || attempts > 40) clearInterval(timer);
     }, 250);
 })();
 </script>
@@ -434,7 +486,32 @@ internal object StreamPlayerSkin {
             var button = document.getElementById('bigPlay');
             if (button) button.click();
         }
+        clickResumeOverlay();
         startVideo();
+    }
+
+    // Nested-frame twin of the landing resume sweep: the real player can
+    // hold a paused "Resume" gate in front of an otherwise-ready video.
+    // Throttled to one click/sec; text match only.
+    var lastNestedResumeClickAt = 0;
+    function clickResumeOverlay() {
+        var now = Date.now();
+        if (now - lastNestedResumeClickAt < 1000) return;
+        try {
+            var candidates = document.querySelectorAll(
+                'button, [role="button"], [data-action="resume"], [data-action="continue"]'
+            );
+            for (var i = 0; i < candidates.length; i++) {
+                var el = candidates[i];
+                if (!el || el.offsetParent === null) continue;
+                var label = (el.innerText || el.textContent || el.getAttribute('aria-label') || '');
+                if (/resume|continue\s*watching/i.test(label)) {
+                    lastNestedResumeClickAt = now;
+                    try { el.click(); } catch (_) {}
+                    return;
+                }
+            }
+        } catch (_) {}
     }
 
     clickLandingPlay();
@@ -448,6 +525,40 @@ internal object StreamPlayerSkin {
         document.addEventListener(eventName, startVideo, true);
     });
     })();
+    """
+
+    /**
+     * Disables the provider's own "Up Next" card (#upnext). It fires on
+     * `ended` when `CONFIG.autoNext` is truthy, shows a white overlay, and
+     * auto-loads the next episode inside the provider page — racing the
+     * app's Up Next/auto-next, which is the source of truth for episode
+     * advance. The player reads `CONFIG.autoNext` live at ended-time off the
+     * same object captured here, so clearing it wins. Re-asserted briefly in
+     * case the landing assigns CONFIG after this runtime. The #upnext CSS
+     * hide is the permanent backstop.
+     */
+    private const val PLAYER_NO_AUTO_NEXT_RUNTIME = """
+(function () {
+    'use strict';
+    function disableAutoNext() {
+        try {
+            if (window.CONFIG && typeof window.CONFIG === 'object') {
+                window.CONFIG.autoNext = false;
+            }
+        } catch (_) {}
+        try {
+            var el = document.getElementById('upnext');
+            if (el) el.style.display = 'none';
+        } catch (_) {}
+    }
+    disableAutoNext();
+    var attempts = 0;
+    var timer = setInterval(function () {
+        attempts++;
+        disableAutoNext();
+        if (attempts > 10) clearInterval(timer);
+    }, 500);
+})();
     """
 
     /** Receives commands from the outer WebView for cross-frame player gestures. */
@@ -478,6 +589,16 @@ internal object StreamPlayerSkin {
     window.__cluPlayerCommandListener = function (event) {
         var command = event && event.data;
         if (!command || command.type !== 'CLUTUBE_PLAYER_COMMAND') return;
+        // Floating miniplayer mode: pin captions near the bottom of the
+        // small window (see YOUTUBE_PLAYER_CSS html.clu-mini rules). The
+        // top-document style cannot reach this cross-origin frame.
+        if (command.action === 'miniMode') {
+            try {
+                var root = document.documentElement;
+                if (root) root.classList.toggle('clu-mini', command.value === 1);
+            } catch (_) {}
+            return;
+        }
         document.querySelectorAll('video').forEach(function (video) {
             applyCommand(video, command);
         });
@@ -1159,6 +1280,26 @@ internal object StreamPlayerSkin {
         max-height: calc(100% - 62px) !important;
         border-radius: 10px;
     }
+}
+
+/* Floating miniplayer: provider captions are bottom-anchored above the
+   control bar. Toggled via the miniMode player command (html.clu-mini)
+   because outer-page CSS cannot reach this nested frame. */
+html.clu-mini .jw-captions,
+html.clu-mini .jw-caption,
+html.clu-mini .vjs-text-track-display {
+    bottom: 4px !important;
+    padding-bottom: 0 !important;
+}
+
+/* The provider's own "Up Next" card (#upnext) is a white overlay that
+   clashes with the skin and races the app's Up Next/auto-next (the app is
+   the source of truth for episode advance). Permanently hidden; the
+   NO_AUTO_NEXT runtime below stops it from being scheduled at all. */
+#upnext {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
 }
 """
 }

@@ -78,13 +78,15 @@ fun FloatingVideoPlayer(
         val isTablet = maxWidth >= 600.dp
 
         // Tablet gets a large, readable window; phones keep the compact one.
+        // Enlarged sizes are generous: double-tap should feel like a real
+        // step up, especially on tablets.
         val targetWidthDp = if (isTablet) {
-            (maxWidth * if (isEnlarged) 0.58f else 0.48f).coerceIn(
-                if (isEnlarged) 480.dp else 400.dp,
-                if (isEnlarged) 720.dp else 600.dp
+            (maxWidth * if (isEnlarged) 0.72f else 0.48f).coerceIn(
+                if (isEnlarged) 560.dp else 400.dp,
+                if (isEnlarged) 880.dp else 600.dp
             )
         } else if (isEnlarged) {
-            (maxWidth * 0.78f).coerceIn(260.dp, 360.dp)
+            (maxWidth * 0.88f).coerceIn(300.dp, 430.dp)
         } else {
             (maxWidth * 0.66f).coerceIn(220.dp, 300.dp)
         }
@@ -94,9 +96,9 @@ fun FloatingVideoPlayer(
             animationSpec = tween(RESIZE_ANIM_MS, easing = FastOutSlowInEasing),
             label = "pip_width"
         )
-        val windowWidthPx = with(density) { windowWidthDp.toPx() }
-        val windowHeightPx = windowWidthPx * (9f / 16f)
         // Target (settled) size in px, for clamping while the resize anim runs.
+        // All edge/snap math uses the settled size: the animated width lags
+        // behind a double-tap resize and would snap the grown window offscreen.
         val targetWidthPx = with(density) { targetWidthDp.toPx() }
         val targetHeightPx = targetWidthPx * (9f / 16f)
 
@@ -179,8 +181,13 @@ fun FloatingVideoPlayer(
                     .pointerInput(Unit) {
                         detectDragGestures(
                             onDragEnd = {
-                                val (maxX, maxY) = boundsFor(windowWidthPx, windowHeightPx)
-                                val targetX = if (position.value.x + windowWidthPx / 2f < screenWidthPx / 2f) {
+                                // Snap against the SETTLED (target) size, not the
+                                // animated width. The animated width lags behind
+                                // a double-tap resize, so using it computes the
+                                // right edge for the small window and the grown
+                                // window ends up past the screen edge.
+                                val (maxX, maxY) = boundsFor(targetWidthPx, targetHeightPx)
+                                val targetX = if (position.value.x + targetWidthPx / 2f < screenWidthPx / 2f) {
                                     edgeMarginPx
                                 } else {
                                     maxX
@@ -200,7 +207,7 @@ fun FloatingVideoPlayer(
                                 }
                             },
                             onDragCancel = {
-                                val (maxX, maxY) = boundsFor(windowWidthPx, windowHeightPx)
+                                val (maxX, maxY) = boundsFor(targetWidthPx, targetHeightPx)
                                 scope.launch {
                                     position.animateTo(
                                         Offset(

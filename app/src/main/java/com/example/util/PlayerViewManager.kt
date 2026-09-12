@@ -51,6 +51,36 @@ object PlayerViewManager {
     private const val TAG = "WebPlaybackManager"
     private const val PLAYER_UI_HIDE_DELAY_MS = 3200L
 
+    /**
+     * Top-document nudge for the autoplay watchdog: clicks the provider's
+     * landing/resume gates and plays any same-document video. Nested frames
+     * get the same via the play postMessage + their injected runtimes.
+     */
+    private const val AUTOPLAY_NUDGE_JS = """
+        (function() {
+            try {
+                var btn = document.getElementById('bigPlay');
+                if (btn && btn.offsetParent !== null) { try { btn.click(); } catch (_) {} }
+                var candidates = document.querySelectorAll('button, [role="button"]');
+                for (var i = 0; i < candidates.length; i++) {
+                    var el = candidates[i];
+                    if (!el || el.offsetParent === null) continue;
+                    var label = (el.innerText || el.textContent || '');
+                    if (/resume|continue\s*watching/i.test(label)) {
+                        try { el.click(); } catch (_) {}
+                        break;
+                    }
+                }
+            } catch (_) {}
+            try {
+                document.querySelectorAll('video').forEach(function(v) {
+                    try { v.muted = false; } catch (_) {}
+                    try { var p = v.play(); if (p && p.catch) p.catch(function() {}); } catch (_) {}
+                });
+            } catch (_) {}
+        })();
+    """
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val mainScope = CoroutineScope(Dispatchers.Main.immediate)
     private var persistentWebView: WebView? = null
@@ -78,6 +108,12 @@ object PlayerViewManager {
     private var reportedPageErrorGeneration = -1L
     private var loadingMaskJob: Job? = null
     private var loadWatchdogJob: Job? = null
+    // Autoplay backstop: a load requested with playWhenReady=true must start
+    // without a tap. If the provider parks a Resume gate the injected
+    // runtimes missed, re-assert play + click the gates. Cancelled by a new
+    // load, an error, explicit user pause, or the first playing snapshot.
+    private var autoplayWatchdogJob: Job? = null
+    private var lastExplicitPauseAtMillis = 0L
     private var hasUsablePlaybackSignal = false
     // Highest position seen from VidLink snapshots this generation. If the
     // position advances, frames are rendering even when the provider's
@@ -640,6 +676,8 @@ object PlayerViewManager {
                         loadingMaskJob = null
                         loadWatchdogJob?.cancel()
                         loadWatchdogJob = null
+                        autoplayWatchdogJob?.cancel()
+                        autoplayWatchdogJob = null
                         hidePlayerUiInternal()
                         _isCleanOverlayLoading.value = false
                         setLoading(false)
@@ -712,6 +750,11 @@ object PlayerViewManager {
                 pendingPlayWhenReady = playWhenReady
                 if (playWhenReady) {
                     play()
+                    // The unpause is a postMessage into the nested provider
+                    // frame; if that frame missed our injected runtime the
+                    // video stays parked behind its Resume gate. Same backstop
+                    // as fresh loads so a tap still starts instantly.
+                    armAutoplayWatchdog(loadGeneration)
                 }
             }
             return
@@ -773,6 +816,8 @@ object PlayerViewManager {
         setError(false)
         loadingMaskJob?.cancel()
         loadWatchdogJob?.cancel()
+        autoplayWatchdogJob?.cancel()
+        autoplayWatchdogJob = null
         loadingMaskJob = mainScope.launch {
             _isCleanOverlayLoading.value = true
             // VidLink keeps its real loading state through isPlayerLoading;
@@ -799,6 +844,14 @@ object PlayerViewManager {
                     }
                 )
             }
+        }
+        // Autoplay backstop (see field): fresh real loads that asked to play
+        // must not sit paused behind a provider Resume gate. Two bounded
+        // nudges at ~4s/~9s; each is a no-op once frames are moving, after
+        // an explicit pause, or after an error. Speculative preloads stay
+        // paused by design.
+        if (!isSpeculative && playWhenReady) {
+            armAutoplayWatchdog(generation)
         }
 
         if (serverId == StreamService.VIDSRC_SERVER_ID) {
@@ -827,6 +880,34 @@ object PlayerViewManager {
                 )
             )
             Log.d(TAG, "Loaded VidLink Pro generation $generation for $targetKey")
+        }
+    }
+
+    /**
+     * Arms the autoplay backstop for [generation]: two bounded nudges while a
+     * load that asked to play is still paused with no explicit pause or
+     * error. Each nudge re-asserts play into every frame and clicks the
+     * provider's landing/resume gates. Self-cancels on the next load.
+     */
+    private fun armAutoplayWatchdog(generation: Long) {
+        autoplayWatchdogJob?.cancel()
+        autoplayWatchdogJob = mainScope.launch {
+            repeat(2) { attempt ->
+                delay(if (attempt == 0) 4000L else 5000L)
+                if (generation != loadGeneration) return@launch
+                if (_hasPlayerError.value) return@launch
+                if (!pendingPlayWhenReady) return@launch
+                if (System.currentTimeMillis() - lastExplicitPauseAtMillis < 15000L) return@launch
+                if (lastKnownIsPlaying) {
+                    autoplayWatchdogJob = null
+                    return@launch
+                }
+                Log.d(TAG, "Autoplay watchdog nudge generation $generation (attempt ${attempt + 1})")
+                setUserPausedFlag(false)
+                dispatchVideoCommand("play")
+                persistentWebView?.evaluateJavascript(AUTOPLAY_NUDGE_JS, null)
+            }
+            autoplayWatchdogJob = null
         }
     }
 
@@ -895,6 +976,9 @@ object PlayerViewManager {
     fun pause() {
         pausedForAudioLoss = false
         lastKnownIsPlaying = false
+        lastExplicitPauseAtMillis = System.currentTimeMillis()
+        autoplayWatchdogJob?.cancel()
+        autoplayWatchdogJob = null
         updateBackgroundWakeLock()
         // The page's screen-off guard must not undo an explicit pause
         // (notification, background-disabled, focus loss): top-level videos
@@ -906,6 +990,11 @@ object PlayerViewManager {
     fun togglePlayPause(isPlaying: Boolean) {
         pausedForAudioLoss = false
         lastKnownIsPlaying = isPlaying
+        if (!isPlaying) {
+            lastExplicitPauseAtMillis = System.currentTimeMillis()
+            autoplayWatchdogJob?.cancel()
+            autoplayWatchdogJob = null
+        }
         updateBackgroundWakeLock()
         setUserPausedFlag(!isPlaying)
         if (isPlaying) dispatchVideoCommand("play") else dispatchVideoCommand("pause")
@@ -1240,6 +1329,10 @@ object PlayerViewManager {
         miniPlayerMode = enabled
         if (enabled) hidePlayerUiInternal()
         persistentWebView?.let(::applyPlayerPresentationMode)
+        // The nested provider frame is cross-origin: top-document CSS can't
+        // reach its captions. Broadcast mini mode so the injected command
+        // runtime toggles html.clu-mini there (caption pinning).
+        dispatchVideoCommand("miniMode", if (enabled) 1.0 else 0.0)
     }
 
     fun releasePlayer() {
@@ -1262,6 +1355,8 @@ object PlayerViewManager {
         loadingMaskJob = null
         loadWatchdogJob?.cancel()
         loadWatchdogJob = null
+        autoplayWatchdogJob?.cancel()
+        autoplayWatchdogJob = null
         _isCleanOverlayLoading.value = false
         loadGeneration += 1L
         persistentWebView?.let { webView ->
@@ -1385,15 +1480,23 @@ object PlayerViewManager {
                 var styleId = 'clu-mini-player-style';
                 var style = document.getElementById(styleId);
                 if ($miniMode) {
+                    var miniCss =
+                        '.jwplayer .jw-controls,.jwplayer .jw-controlbar,' +
+                        '.jwplayer .jw-display-icon-container,.jwplayer .jw-title,' +
+                        '.video-js .vjs-control-bar,.video-js .vjs-big-play-button,' +
+                        '.vjs-control-bar { opacity:0!important; visibility:hidden!important; pointer-events:none!important; }' +
+                        // Captions are bottom-anchored above the control
+                        // bar. With the bar hidden in the floating window
+                        // that gap strands cues high up — pin them low.
+                        '.jwplayer .jw-captions,.jwplayer .jw-caption,' +
+                        '.video-js .vjs-text-track-display { bottom:4px!important; padding-bottom:0!important; }';
                     if (!style) {
                         style = document.createElement('style');
                         style.id = styleId;
-                        style.textContent =
-                            '.jwplayer .jw-controls,.jwplayer .jw-controlbar,' +
-                            '.jwplayer .jw-display-icon-container,.jwplayer .jw-title,' +
-                            '.video-js .vjs-control-bar,.video-js .vjs-big-play-button,' +
-                            '.vjs-control-bar { opacity:0!important; visibility:hidden!important; pointer-events:none!important; }';
+                        style.textContent = miniCss;
                         (document.head || document.documentElement).appendChild(style);
+                    } else if (style.textContent !== miniCss) {
+                        style.textContent = miniCss;
                     }
                     document.querySelectorAll('video').forEach(function(video) {
                         if (video.__cluControlsBeforeMini === undefined) {
